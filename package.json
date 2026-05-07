@@ -156,17 +156,17 @@
         {
           "command": "chatCustomizationsEvaluations.analyzePromptFromCustomization",
           "group": "inline",
-          "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instruction || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
+          "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instructions || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
         },
         {
           "command": "chatCustomizationsEvaluations.wazaCreateEval",
           "group": "inline",
-          "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instruction || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
+          "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instructions || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
         },
         {
           "command": "chatCustomizationsEvaluations.wazaRunEval",
           "group": "inline",
-          "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instruction || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
+          "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instructions || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
         }
       ]
     },
