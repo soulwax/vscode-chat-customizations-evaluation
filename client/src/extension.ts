@@ -669,19 +669,12 @@ export function activate(context: vscode.ExtensionContext) {
         outputChannel.appendLine(result.stderr);
       }
 
-      if (result.exitCode !== 0) {
-        void vscode.window.showErrorMessage('waza evaluation failed. See "Chat Customizations Evaluations" output for details.');
-        return;
-      }
-
       // Check if results file was created
       const resultsFileExists = fs.existsSync(resultsFile);
       const resultsUri = vscode.Uri.file(resultsFile);
 
       if (resultsFileExists) {
-        // Format as clickable file URI with proper encoding
-        const fileUri = resultsUri.toString();
-        outputChannel.appendLine(`[Waza] Results saved to: ${fileUri}`);
+        outputChannel.appendLine(`[Waza] Results file URI: ${resultsUri.toString()}`);
 
         // Show notification with action to open results
         const action = await vscode.window.showInformationMessage(
