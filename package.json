@@ -167,16 +167,6 @@
           "command": "chatCustomizationsEvaluations.wazaRunEval",
           "group": "inline",
           "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instruction || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
-        },
-        {
-          "command": "chatCustomizationsEvaluations.wazaDownloadBinary",
-          "group": "inline",
-          "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instruction || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
-        },
-        {
-          "command": "chatCustomizationsEvaluations.openWazaUserGuide",
-          "group": "inline",
-          "when": "aiCustomizationManagementItemType == prompt || aiCustomizationManagementItemType == instruction || aiCustomizationManagementItemType == skill || aiCustomizationManagementItemType == agent"
         }
       ]
     },
