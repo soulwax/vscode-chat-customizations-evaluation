@@ -20,12 +20,19 @@ export class LLMAnalyzer {
   private static readonly MAX_COMPOSED_SIZE = 100_000;
 
   /**
-   * Extract JSON from an LLM response that may be wrapped in markdown code fences.
+   * Extract JSON from an LLM response that may be wrapped in markdown code fences
+   * or contain leading/trailing non-JSON text.
    */
   private extractJSON<T>(text: string): T {
     // Strip markdown code fences: ```json ... ``` or ``` ... ```
     const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-    const jsonStr = fenceMatch ? fenceMatch[1].trim() : text.trim();
+    if (fenceMatch) {
+      return JSON.parse(fenceMatch[1].trim()) as T;
+    }
+    // Strip any text before the first { or [ and after the last } or ]
+    const start = text.search(/[{[]/);
+    const end = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
+    const jsonStr = start !== -1 && end > start ? text.slice(start, end + 1) : text.trim();
     return JSON.parse(jsonStr) as T;
   }
 
@@ -70,13 +77,24 @@ export class LLMAnalyzer {
       for (const result of settled) {
         if (result.status === 'fulfilled') {
           results.push(...result.value);
+        } else {
+          results.push({
+            code: 'llm-error',
+            message: `LLM analysis failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+            severity: 'warning',
+            range: {
+              start: { line: 0, character: 0 },
+              end: { line: 0, character: 1 },
+            },
+            analyzer: 'llm-analyzer',
+          });
         }
       }
     } catch (error) {
       results.push({
         code: 'llm-error',
         message: `LLM analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        severity: 'info',
+        severity: 'warning',
         range: {
           start: { line: 0, character: 0 },
           end: { line: 0, character: 1 },
@@ -217,8 +235,17 @@ IMPORTANT:
       this.processCognitiveLoad(doc, parsed, results);
       this.processCoverage(doc, parsed, results);
       this.processCustomDiagnostics(doc, parsed, results);
-    } catch {
-      // JSON parse error, skip
+    } catch (error) {
+      results.push({
+        code: 'llm-parse-error',
+        message: `Analysis ran but couldn't parse results — try again. (${error instanceof Error ? error.message : 'JSON parse error'})`,
+        severity: 'info',
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        },
+        analyzer: 'llm-analyzer',
+      });
     }
 
     return results;
@@ -464,8 +491,17 @@ If no conflicts found, return {"conflicts": []}`;
           suggestion: conflict.suggestion,
         });
       }
-    } catch {
-      // JSON parse error, skip
+    } catch (error) {
+      results.push({
+        code: 'llm-parse-error',
+        message: `Analysis ran but couldn't parse results — try again. (${error instanceof Error ? error.message : 'JSON parse error'})`,
+        severity: 'info',
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: 0, character: 1 },
+        },
+        analyzer: 'llm-analyzer',
+      });
     }
 
     return results;
