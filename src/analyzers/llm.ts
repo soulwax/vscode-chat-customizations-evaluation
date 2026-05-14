@@ -26,23 +26,28 @@ export class LLMAnalyzer {
   private extractJSON<T>(text: string): T {
     // Strip markdown code fences: ```json ... ``` or ``` ... ```
     const fenceMatch = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
-    if (fenceMatch) {
-      return JSON.parse(fenceMatch[1].trim()) as T;
-    }
-    // Strip any text before the first { or [ and after the last } or ]
-    const start = text.search(/[{\[]/);
-    const end = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
-    const jsonStr = start !== -1 && end > start ? text.slice(start, end + 1) : text.trim();
+    const raw = fenceMatch ? fenceMatch[1].trim() : text.trim();
+    // Slice from first { to last } to tolerate leading/trailing prose
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    const jsonStr = start !== -1 && end > start ? raw.slice(start, end + 1) : raw;
     return JSON.parse(jsonStr) as T;
+  }
+
+  private formatError(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (typeof error === 'string') return error;
+    try { return JSON.stringify(error); } catch { return 'Unknown error'; }
   }
 
   /**
    * Create a user-visible diagnostic for LLM analysis errors (network/auth failures).
    */
-  private makeLLMErrorDiagnostic(error: unknown): AnalysisResult {
+  private makeLLMErrorDiagnostic(error: unknown, phase?: string): AnalysisResult {
+    const phaseLabel = phase ? ` [${phase}]` : '';
     return {
       code: 'llm-error',
-      message: `LLM analysis failed: ${error instanceof Error ? error.message : String(error)}`,
+      message: `LLM analysis failed${phaseLabel}: ${this.formatError(error)}`,
       severity: 'warning',
       range: {
         start: { line: 0, character: 0 },
@@ -101,16 +106,18 @@ export class LLMAnalyzer {
 
     try {
       // Run combined analysis + composition conflicts in parallel
-      const settled = await Promise.allSettled([
-        this.analyzeCombined(doc, customDiagnostics),
-        this.analyzeCompositionConflicts(doc),
-      ]);
+      const phases = [
+        { name: 'combined', promise: this.analyzeCombined(doc, customDiagnostics) },
+        { name: 'composition-conflicts', promise: this.analyzeCompositionConflicts(doc) },
+      ] as const;
+      const settled = await Promise.allSettled(phases.map(p => p.promise));
 
-      for (const result of settled) {
+      for (let i = 0; i < settled.length; i++) {
+        const result = settled[i];
         if (result.status === 'fulfilled') {
           results.push(...result.value);
         } else {
-          results.push(this.makeLLMErrorDiagnostic(result.reason));
+          results.push(this.makeLLMErrorDiagnostic(result.reason, phases[i].name));
         }
       }
     } catch (error) {

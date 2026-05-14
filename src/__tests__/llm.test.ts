@@ -68,6 +68,11 @@ describe('LLMAnalyzer', () => {
       expect(result).toEqual({ issues: [] });
     });
 
+    it('should handle JSON inside code fence with preamble text', () => {
+      const result = extract('```json\nHere is the analysis:\n{"issues": []}\n```');
+      expect(result).toEqual({ issues: [] });
+    });
+
     it('should handle nested objects', () => {
       const result = extract('{"a": {"b": [1, 2, 3]}}');
       expect(result).toEqual({ a: { b: [1, 2, 3] } });
@@ -181,6 +186,8 @@ describe('LLMAnalyzer', () => {
       expect(results.some(r => r.code === 'llm-error')).toBe(true);
       expect(results.some(r => r.severity === 'warning')).toBe(true);
       expect(results.some(r => r.message.includes('Model unavailable'))).toBe(true);
+      // Phase name should be included in the diagnostic message
+      expect(results.some(r => r.message.includes('[combined]'))).toBe(true);
     });
 
     it('should handle proxy rejection gracefully', async () => {
@@ -284,11 +291,25 @@ describe('LLMAnalyzer', () => {
       const doc = makeDoc('Be concise.\nProvide detailed explanations.');
       const results = await analyzer.analyze(doc);
 
-      // The rejection from analyzeCombined should surface as a warning diagnostic
+      // The rejection from analyzeCombined should surface as a warning diagnostic with phase name
       expect(results.some(r => r.code === 'llm-error')).toBe(true);
       expect(results.some(r => r.message.includes('Copilot unavailable'))).toBe(true);
+      expect(results.some(r => r.message.includes('[combined]'))).toBe(true);
       // Results should not throw — we still get a valid array
       expect(Array.isArray(results)).toBe(true);
+    });
+
+    it('should format non-Error object rejections without producing [object Object]', async () => {
+      const mockProxy = vi.fn().mockRejectedValue({ status: 403, detail: 'Forbidden' });
+      analyzer.setProxyFn(mockProxy);
+
+      const doc = makeDoc('Simple prompt.');
+      const results = await analyzer.analyze(doc);
+      expect(results.some(r => r.code === 'llm-error')).toBe(true);
+      // Should JSON.stringify the object, not produce [object Object]
+      const errorDiag = results.find(r => r.code === 'llm-error')!;
+      expect(errorDiag.message).not.toContain('[object Object]');
+      expect(errorDiag.message).toContain('403');
     });
   });
 });
