@@ -209,7 +209,7 @@ function markDiagnosticsFound(uri: vscode.Uri, count: number): void {
   updateAnalysisStatusBar();
 }
 
-async function completeAnalysis(uri: vscode.Uri, diagnostics: vscode.Diagnostic[]): Promise<void> {
+async function completeAnalysis(uri: vscode.Uri, result: { duration: number; resultCount: number }): Promise<void> {
   const uriKey = uri.toString();
   const state = analysisStatesByUri.get(uriKey);
   if (state?.resolveProgress) {
@@ -219,7 +219,7 @@ async function completeAnalysis(uri: vscode.Uri, diagnostics: vscode.Diagnostic[
   analysisStatesByUri.delete(uriKey);
   updateIsAnalyzingContext();
 
-  const issueCount = diagnostics.length;
+  const issueCount = result.resultCount;
   statusBarCompletionMessage = issueCount > 0
     ? `$(check) ${formatIssueSummary(issueCount)}`
     : `$(check) No issues`;
@@ -234,13 +234,13 @@ async function completeAnalysis(uri: vscode.Uri, diagnostics: vscode.Diagnostic[
   updateAnalysisStatusBar();
 
   const filename = path.basename(uri.fsPath);
-  const durationText = state ? ` in ${formatDurationMs(Date.now() - state.startedAt)}` : '';
-  if (diagnostics.length === 0) {
+  const durationText = state ? ` in ${formatDurationMs(result.duration)}` : '';
+  if (result.resultCount === 0) {
     void vscode.window.showInformationMessage(`Analysis of ${filename} complete${durationText}: no issues found.`);
     return;
   }
 
-  await notifyAndFocusProblems(uri, diagnostics, filename, durationText);
+  await notifyAndFocusProblems(uri, result.resultCount, filename, durationText);
 }
 const WAZA_USER_GUIDE_FALLBACK = `# Waza User Guide
 
@@ -764,7 +764,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Show a popup dialog when the server notifies content is stale
-  client.onNotification('chatCustomizationsEvaluations/contentStale', (params: { uri: string }) => {
+  client.onNotification('chatCustomizationsEvaluations/contentStale', (_params: { uri: string }) => {
     void vscode.window.showInformationMessage('Content is stale. Run Analyze to update diagnostics.');
   });
 
@@ -787,7 +787,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register commands
   context.subscriptions.push(
-    vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', () => {
+    vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
       if (pendingAnalysisUris.has(editor.document.uri.toString())) return;
@@ -799,8 +799,9 @@ export function activate(context: vscode.ExtensionContext) {
 
       beginAnalysis(editor.document.uri.toString());
       markAnalysisStage('Submitting analysis request...');
-      // Send notification to server to trigger full analysis
-      client.sendNotification('chatCustomizationsEvaluations/analyze', analyzeRequest);
+      // Send request to server to trigger full analysis
+      const result = client.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
+      await completeAnalysis(editor.document.uri, await result);
     }),
     vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -843,9 +844,15 @@ export function activate(context: vscode.ExtensionContext) {
 
       beginAnalysis(uri.toString());
       markAnalysisStage('Submitting analysis request...');
-      client.sendNotification('chatCustomizationsEvaluations/analyze', analyzeRequest);
+      const result = client.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
       const document = await vscode.workspace.openTextDocument(uri);
       await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+      
+      await completeAnalysis(uri, await result);
+
+      // Update context key based on the active editor
+      updateHasDiagnosticsContext();
+
     }),
     vscode.commands.registerCommand('chatCustomizationsEvaluations.wazaCreateEval', async (obj) => {
       const context = resolveSkillContext(obj);
@@ -973,7 +980,6 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (pendingAnalysisUris.has(uri.toString())) {
           markDiagnosticsFound(uri, diagnostics.length);
-          void completeAnalysis(uri, diagnostics);
         }
       }
       // Update context key based on the active editor
@@ -1018,8 +1024,8 @@ function getExtensionDiagnostics(uri: vscode.Uri): vscode.Diagnostic[] {
   );
 }
 
-async function notifyAndFocusProblems(uri: vscode.Uri, diagnostics: vscode.Diagnostic[], filename: string, durationSuffix = ''): Promise<void> {
-  const message = `Analysis of ${filename} complete${durationSuffix}: ${formatIssueSummary(diagnostics.length)}.`;
+async function notifyAndFocusProblems(uri: vscode.Uri, resultCount: number, filename: string, durationSuffix = ''): Promise<void> {
+  const message = `Analysis of ${filename} complete${durationSuffix}: ${formatIssueSummary(resultCount)}.`;
 
   void (async () => {
     const action = await vscode.window.showInformationMessage(message, ACTION_SHOW_PROBLEMS, ACTION_FIX_DIAGNOSTICS);
@@ -1032,7 +1038,7 @@ async function notifyAndFocusProblems(uri: vscode.Uri, diagnostics: vscode.Diagn
 
   const document = await vscode.workspace.openTextDocument(uri);
   const editor = await vscode.window.showTextDocument(document, { preview: false, preserveFocus: true });
-  const firstDiagnostic = diagnostics
+  const firstDiagnostic = getExtensionDiagnostics(uri)
     .slice()
     .sort((a, b) => {
       if (a.range.start.line !== b.range.start.line) {
