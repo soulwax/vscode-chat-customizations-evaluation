@@ -67,6 +67,11 @@
           "default": "off",
           "description": "Traces the communication between VS Code and the language server"
         },
+        "chatCustomizationsEvaluations.model": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "Model to use for analysis (for example: gpt-4o, gpt-4.1, gpt-4.1-mini). Defaults to gpt-4o."
+        },
         "chatCustomizationsEvaluations.customDiagnostics": {
           "type": "array",
           "items": {
