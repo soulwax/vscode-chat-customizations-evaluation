@@ -33,6 +33,8 @@ let statusBarCompletionTimer: ReturnType<typeof setTimeout> | undefined;
 const STATUS_BAR_COMPLETION_DURATION_MS = 5000;
 const ACTION_SHOW_PROBLEMS = 'Show Problems';
 const ACTION_FIX_DIAGNOSTICS = 'Fix Diagnostics';
+const ACTION_INSTALL_WAZA_BINARY = 'Install Waza Binary';
+const ACTION_OPEN_WAZA_USER_GUIDE = 'Open Waza User Guide';
 const TELEMETRY_ENDPOINT_ENV = 'CHAT_CUSTOMIZATIONS_EVALUATIONS_TELEMETRY_ENDPOINT';
 const TELEMETRY_AUTH_TOKEN_ENV = 'CHAT_CUSTOMIZATIONS_EVALUATIONS_TELEMETRY_AUTH_TOKEN';
 
@@ -1329,6 +1331,12 @@ async function runWazaEvaluationForContext(context: SkillContext, evalPath: stri
 
   if (result.exitCode !== 0) {
     logTelemetryUsage('waza/runEval/result', { outcome: 'failed' });
+
+    if (isWazaUnavailableResult(result)) {
+      await showWazaInstallPrompt('waza is not installed or not available. Install the binary now?');
+      return;
+    }
+
     void vscode.window.showErrorMessage('waza evaluation failed. See "Chat Customizations Evaluations" output for details.');
     return;
   }
@@ -1584,6 +1592,35 @@ function shouldFallbackToLocalGo(stderr: string): boolean {
   return (
     lower.includes('spawn') && lower.includes('enoent')
   ) || lower.includes('command not found') || lower.includes('executable file not found');
+}
+
+function isWazaUnavailableResult(result: CommandResult): boolean {
+  if (result.exitCode === 0) {
+    return false;
+  }
+
+  const output = `${result.stderr}\n${result.stdout}`;
+  const lower = output.toLowerCase();
+  return shouldFallbackToLocalGo(output) || lower.includes('go is not available on path for local fallback');
+}
+
+async function showWazaInstallPrompt(message: string): Promise<boolean> {
+  const action = await vscode.window.showWarningMessage(
+    message,
+    ACTION_INSTALL_WAZA_BINARY,
+    ACTION_OPEN_WAZA_USER_GUIDE,
+  );
+
+  if (action === ACTION_INSTALL_WAZA_BINARY) {
+    await vscode.commands.executeCommand('chatCustomizationsEvaluations.wazaDownloadBinary');
+    return true;
+  }
+
+  if (action === ACTION_OPEN_WAZA_USER_GUIDE) {
+    await vscode.commands.executeCommand('chatCustomizationsEvaluations.openWazaUserGuide');
+  }
+
+  return false;
 }
 
 function detectWazaAssetTarget(): WazaAssetTarget {
@@ -1959,20 +1996,19 @@ async function ensureWazaInstalled(cwd: string): Promise<boolean> {
     return true;
   }
 
-  outputChannel.appendLine('[Waza] waza command unavailable; downloading managed binary.');
-
-  try {
-    const installPath = await downloadAndInstallWazaBinary();
-    const configuration = vscode.workspace.getConfiguration('chatCustomizationsEvaluations');
-    await configuration.update('waza.command', installPath, vscode.ConfigurationTarget.Global);
-    outputChannel.appendLine(`[Waza] Installed managed binary at ${installPath}`);
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    outputChannel.appendLine(`[Waza] Failed to install managed binary: ${message}`);
-    void vscode.window.showErrorMessage(`Failed to install waza binary: ${message}`);
+  outputChannel.appendLine('[Waza] waza command unavailable; prompting for binary installation.');
+  const installRequested = await showWazaInstallPrompt('waza is not installed or not available. Install the binary now?');
+  if (!installRequested) {
     return false;
   }
+
+  const postInstallProbe = await runWazaCommand(['--version'], cwd, 10_000);
+  if (postInstallProbe.exitCode === 0) {
+    return true;
+  }
+
+  void vscode.window.showErrorMessage('waza is still unavailable after installation attempt. See "Chat Customizations Evaluations" output for details.');
+  return false;
 }
 
 async function createWazaEvalScaffold(context: SkillContext): Promise<EvalScaffoldSummary | undefined> {
@@ -2003,6 +2039,12 @@ async function createWazaEvalScaffold(context: SkillContext): Promise<EvalScaffo
       usedTemporaryWorkspaceFallback,
     });
     outputChannel.appendLine(`[Waza] eval scaffold failed\n${finalResult.stderr || finalResult.stdout}`);
+
+    if (isWazaUnavailableResult(finalResult)) {
+      await showWazaInstallPrompt('waza is not installed or not available. Install the binary now?');
+      return undefined;
+    }
+
     void vscode.window.showErrorMessage('Failed to create waza eval scaffold. See "Chat Customizations Evaluations" output for details.');
     return undefined;
   }
