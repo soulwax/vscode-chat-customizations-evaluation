@@ -464,10 +464,14 @@ class ExtensionRuntime {
   private extensionContext!: vscode.ExtensionContext;
   private telemetryLogger: vscode.TelemetryLogger | undefined;
   private analysisCoordinator!: AnalysisCoordinator;
+  private extensionDiagnosticCollection!: vscode.DiagnosticCollection;
+  private readonly pendingDiagnosticEditsByUri = new Map<string, { fullDocument: boolean; ranges: vscode.Range[] }>();
 
   activate(context: vscode.ExtensionContext): void {
     this.extensionContext = context;
     this.outputChannel = vscode.window.createOutputChannel('Chat Customizations Evaluations');
+    this.extensionDiagnosticCollection = vscode.languages.createDiagnosticCollection('chat-customizations-evaluations-client');
+    context.subscriptions.push(this.extensionDiagnosticCollection);
     this.analysisCoordinator = new AnalysisCoordinator(
       (uri) => this.getExtensionDiagnostics(uri),
       (diagnostic) => this.isNonFixableDiagnostic(diagnostic),
@@ -518,6 +522,21 @@ class ExtensionRuntime {
           vscode.workspace.createFileSystemWatcher('**/*{prompt.md, agent.md, instructions.md, SKILL.md, AGENTS.md}')
         ],
       },
+      middleware: {
+        handleDiagnostics: (uri, diagnostics, next) => {
+          const uriKey = uri.toString();
+          const pendingEdit = this.pendingDiagnosticEditsByUri.get(uriKey);
+          const filteredDiagnostics = pendingEdit
+            ? this.filterDiagnosticsForEdit(diagnostics, pendingEdit)
+            : diagnostics;
+
+          this.pendingDiagnosticEditsByUri.delete(uriKey);
+          this.extensionDiagnosticCollection.set(uri, filteredDiagnostics);
+
+          // Prevent duplicate display by routing diagnostics through the client-owned collection.
+          next(uri, []);
+        },
+      },
       outputChannel: this.outputChannel,
     };
 
@@ -554,6 +573,14 @@ class ExtensionRuntime {
     context.subscriptions.push(
       vscode.languages.onDidChangeDiagnostics((e) => {
         this.analysisCoordinator?.handleDiagnosticsChanged(e.uris);
+      }),
+      vscode.workspace.onDidChangeTextDocument((event) => {
+        this.handleDocumentChangeForDiagnostics(event);
+      }),
+      vscode.workspace.onDidCloseTextDocument((document) => {
+        const uriKey = document.uri.toString();
+        this.pendingDiagnosticEditsByUri.delete(uriKey);
+        this.extensionDiagnosticCollection.delete(document.uri);
       }),
     );
 
@@ -883,9 +910,93 @@ class ExtensionRuntime {
   }
 
   private getExtensionDiagnostics(uri: vscode.Uri): vscode.Diagnostic[] {
+    const fromCollection = this.extensionDiagnosticCollection.get(uri) ?? [];
+    if (fromCollection.length > 0) {
+      return fromCollection.filter(
+        d => d.source?.startsWith('chat-customizations-evaluations')
+      );
+    }
+
     return vscode.languages.getDiagnostics(uri).filter(
       d => d.source?.startsWith('chat-customizations-evaluations')
     );
+  }
+
+  private handleDocumentChangeForDiagnostics(event: vscode.TextDocumentChangeEvent): void {
+    if (event.contentChanges.length === 0) {
+      return;
+    }
+
+    const uri = event.document.uri;
+    const uriKey = uri.toString();
+    const currentEdit = this.pendingDiagnosticEditsByUri.get(uriKey) ?? { fullDocument: false, ranges: [] };
+    const nextEdit = this.mergeDiagnosticEdit(currentEdit, event.contentChanges);
+    this.pendingDiagnosticEditsByUri.set(uriKey, nextEdit);
+
+    const existingDiagnostics = this.extensionDiagnosticCollection.get(uri) ?? [];
+    if (existingDiagnostics.length === 0) {
+      return;
+    }
+
+    const filteredDiagnostics = this.filterDiagnosticsForEdit(existingDiagnostics, nextEdit);
+    if (filteredDiagnostics.length === existingDiagnostics.length) {
+      return;
+    }
+
+    this.extensionDiagnosticCollection.set(uri, filteredDiagnostics);
+    this.outputChannel.appendLine(`[Diagnostics] Removed ${existingDiagnostics.length - filteredDiagnostics.length} touched diagnostics for ${uri.fsPath}`);
+  }
+
+  private mergeDiagnosticEdit(
+    existing: { fullDocument: boolean; ranges: vscode.Range[] },
+    contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
+  ): { fullDocument: boolean; ranges: vscode.Range[] } {
+    const hasFullDocumentEdit = existing.fullDocument || contentChanges.some(change => !change.range);
+    if (hasFullDocumentEdit) {
+      return { fullDocument: true, ranges: [] };
+    }
+
+    const nextRanges = existing.ranges.slice();
+    for (const change of contentChanges) {
+      if (change.range) {
+        nextRanges.push(change.range);
+      }
+    }
+
+    return {
+      fullDocument: false,
+      ranges: nextRanges,
+    };
+  }
+
+  private filterDiagnosticsForEdit(
+    diagnostics: readonly vscode.Diagnostic[],
+    edit: { fullDocument: boolean; ranges: vscode.Range[] },
+  ): vscode.Diagnostic[] {
+    if (edit.fullDocument) {
+      return [];
+    }
+
+    if (edit.ranges.length === 0) {
+      return diagnostics.slice();
+    }
+
+    return diagnostics.filter((diagnostic) => {
+      return !edit.ranges.some((range) => this.rangesOverlap(diagnostic.range, range));
+    });
+  }
+
+  private comparePosition(left: vscode.Position, right: vscode.Position): number {
+    if (left.line !== right.line) {
+      return left.line - right.line;
+    }
+
+    return left.character - right.character;
+  }
+
+  private rangesOverlap(left: vscode.Range, right: vscode.Range): boolean {
+    return this.comparePosition(left.start, right.end) <= 0
+      && this.comparePosition(right.start, left.end) <= 0;
   }
 
   private diagnosticCodeToString(code: vscode.Diagnostic['code']): string {
