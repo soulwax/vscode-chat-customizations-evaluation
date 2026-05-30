@@ -308,188 +308,194 @@ class ExtensionRuntime {
 
   private registerCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
-      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async () => {
-        this.logTelemetryUsage('command/analyzePrompt', { source: 'activeEditor' });
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-          this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'noActiveEditor' });
-          return;
-        }
-        if (this.analysisCoordinator?.isAnalysisPending(editor.document.uri)) {
-          this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'alreadyRunning' });
-          return;
-        }
-
-        const analyzeRequest: AnalyzeRequest = {
-          uri: editor.document.uri.toString(),
-          customDiagnostics: this.getCustomDiagnostics(),
-        };
-
-        const currentSnapshot = await this.analysisCoordinator.getCurrentAnalysisSnapshot(editor.document.uri, analyzeRequest.customDiagnostics);
-        if (currentSnapshot.isFresh) {
-          if (currentSnapshot.diagnostics.length > 0) {
-            await this.analysisCoordinator.focusExistingDiagnostics(editor.document.uri);
-            this.logTelemetryUsage('command/analyzePrompt/result', {
-              outcome: 'alreadyCurrentWithDiagnostics',
-              resultCount: currentSnapshot.diagnostics.length,
-              customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-            });
-            vscode.window.showInformationMessage('Analysis is already up to date.');
-            return;
-          }
-          await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
-          this.logTelemetryUsage('command/analyzePrompt/result', {
-            outcome: 'alreadyCurrentNoIssues',
-            resultCount: currentSnapshot.resultCount ?? 0,
-            customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-          });
-          void vscode.window.showInformationMessage('Analysis is already up to date: no issues found.');
-          return;
-        }
-
-        this.analysisCoordinator.beginAnalysis(editor.document.uri.toString());
-        this.analysisCoordinator.markAnalysisStage('Submitting analysis request...');
-        try {
-          const result = await this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
-          this.analysisCoordinator.recordAnalysisSnapshot(editor.document, analyzeRequest.customDiagnostics, result.resultCount);
-          this.logTelemetryUsage('command/analyzePrompt/result', {
-            outcome: 'success',
-            resultCount: result.resultCount,
-            durationMs: result.duration,
-            customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-          });
-          await this.analysisCoordinator.completeAnalysis(editor.document.uri, result);
-        } catch (error) {
-          this.logTelemetryError('command/analyzePrompt/result', error, { outcome: 'failed' });
-          void vscode.window.showErrorMessage('Prompt analysis failed. See output for details.');
-        }
-      }),
-      vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async () => {
-        this.logTelemetryUsage('command/fixDiagnostics');
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-          this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noActiveEditor' });
-          return;
-        }
-
-        const targetUri = editor.document.uri;
-        const initialText = editor.document.getText();
-        const diagnostics = this.getExtensionDiagnostics(targetUri)
-          .slice()
-          .sort((a, b) => {
-            if (a.range.start.line !== b.range.start.line) {
-              return a.range.start.line - b.range.start.line;
-            }
-            return a.range.start.character - b.range.start.character;
-          });
-
-        if (diagnostics.length === 0) {
-          this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noDiagnostics' });
-          void vscode.window.showInformationMessage('No diagnostics found for the active file. Run Analyze first.');
-          return;
-        }
-
-        const fixableDiagnostics = diagnostics.filter(diagnostic => !this.isNonFixableDiagnostic(diagnostic));
-        if (fixableDiagnostics.length === 0) {
-          this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'nonFixableDiagnosticsOnly' });
-          const action = await vscode.window.showInformationMessage(
-            'Fix Diagnostics is unavailable for LLM analysis error diagnostics. Run Analyze again.',
-            ACTION_ANALYZE_AGAIN,
-          );
-          if (action === ACTION_ANALYZE_AGAIN) {
-            await vscode.commands.executeCommand('chatCustomizationsEvaluations.analyzePrompt');
-          }
-          return;
-        }
-
-        await vscode.window.showTextDocument(editor.document, { preview: false, preserveFocus: false });
-
-        const query = this.buildFixDiagnosticsChatQuery(editor.document, fixableDiagnostics);
-        await vscode.commands.executeCommand('workbench.action.chat.open', {
-          query,
-          isPartialQuery: false,
-        });
-
-        const hasImprovements = await this.waitForDocumentImprovements(
-          targetUri,
-          initialText,
-          ExtensionRuntime.FIX_DIAGNOSTICS_IMPROVEMENT_TIMEOUT_MS,
-        );
-        if (!hasImprovements) {
-          this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noChangesDetected' });
-          return;
-        }
-
-        const skillContext = this.resolveSkillContext({ uri: targetUri });
-        if (!skillContext) {
-          this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noSkillContext' });
-          return;
-        }
-
-        await handlePostFixDiagnosticsFlow(skillContext);
-        this.logTelemetryUsage('command/fixDiagnostics/result', {
-          outcome: 'success',
-          diagnosticsCount: fixableDiagnostics.length,
-        });
-      }),
-      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptFromCustomization', async (obj) => {
-        this.logTelemetryUsage('command/analyzePromptFromCustomization');
-        this.outputChannel.appendLine(`customization obj : ${JSON.stringify(obj)}`);
-        const uri = this.getCustomizationUri(obj);
-        if (!uri) {
-          this.outputChannel.appendLine('[Analyze Prompt From Customization] Missing URI in command arguments');
-          this.logTelemetryUsage('command/analyzePromptFromCustomization/result', { outcome: 'missingUri' });
-          void vscode.window.showWarningMessage('Unable to analyze prompt: no URI was provided by the customization item.');
-          return;
-        }
-
-        const analyzeRequest: AnalyzeRequest = {
-          uri: uri.toString(),
-          customDiagnostics: this.getCustomDiagnostics(),
-        };
-
-        const currentSnapshot = await this.analysisCoordinator.getCurrentAnalysisSnapshot(uri, analyzeRequest.customDiagnostics);
-        if (currentSnapshot.isFresh) {
-          if (currentSnapshot.diagnostics.length > 0) {
-            await this.analysisCoordinator.focusExistingDiagnostics(uri);
-            this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
-              outcome: 'alreadyCurrentWithDiagnostics',
-              resultCount: currentSnapshot.diagnostics.length,
-              customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-            });
-            vscode.window.showInformationMessage('Analysis is already up to date.');
-            return;
-          }
-          await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
-          this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
-            outcome: 'alreadyCurrentNoIssues',
-            resultCount: currentSnapshot.resultCount ?? 0,
-            customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-          });
-          vscode.window.showInformationMessage('Analysis is already up to date: no issues found.');
-          return;
-        }
-
-        this.analysisCoordinator.beginAnalysis(uri.toString());
-        this.analysisCoordinator.markAnalysisStage('Submitting analysis request...');
-        try {
-          const result = await this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
-          this.analysisCoordinator.recordAnalysisSnapshot(currentSnapshot.document, analyzeRequest.customDiagnostics, result.resultCount);
-          await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
-
-          await this.analysisCoordinator.completeAnalysis(uri, result);
-          this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
-            outcome: 'success',
-            resultCount: result.resultCount,
-            durationMs: result.duration,
-            customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
-          });
-        } catch (error) {
-          this.logTelemetryError('command/analyzePromptFromCustomization/result', error, { outcome: 'failed' });
-          void vscode.window.showErrorMessage('Prompt analysis failed. See output for details.');
-        }
-      }),
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async () => this.handleAnalyzePromptCommand()),
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async () => this.handleFixDiagnosticsCommand()),
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptFromCustomization', async (obj) => this.handleAnalyzePromptFromCustomizationCommand(obj)),
     );
+  }
+
+  private async handleAnalyzePromptCommand(): Promise<void> {
+    this.logTelemetryUsage('command/analyzePrompt', { source: 'activeEditor' });
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'noActiveEditor' });
+      return;
+    }
+    if (this.analysisCoordinator?.isAnalysisPending(editor.document.uri)) {
+      this.logTelemetryUsage('command/analyzePrompt/result', { outcome: 'alreadyRunning' });
+      return;
+    }
+
+    const analyzeRequest: AnalyzeRequest = {
+      uri: editor.document.uri.toString(),
+      customDiagnostics: this.getCustomDiagnostics(),
+    };
+
+    const currentSnapshot = await this.analysisCoordinator.getCurrentAnalysisSnapshot(editor.document.uri, analyzeRequest.customDiagnostics);
+    if (currentSnapshot.isFresh) {
+      if (currentSnapshot.diagnostics.length > 0) {
+        await this.analysisCoordinator.focusExistingDiagnostics(editor.document.uri);
+        this.logTelemetryUsage('command/analyzePrompt/result', {
+          outcome: 'alreadyCurrentWithDiagnostics',
+          resultCount: currentSnapshot.diagnostics.length,
+          customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+        });
+        vscode.window.showInformationMessage('Analysis is already up to date.');
+        return;
+      }
+      await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
+      this.logTelemetryUsage('command/analyzePrompt/result', {
+        outcome: 'alreadyCurrentNoIssues',
+        resultCount: currentSnapshot.resultCount ?? 0,
+        customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+      });
+      void vscode.window.showInformationMessage('Analysis is already up to date: no issues found.');
+      return;
+    }
+
+    this.analysisCoordinator.beginAnalysis(editor.document.uri.toString());
+    this.analysisCoordinator.markAnalysisStage('Submitting analysis request...');
+    try {
+      const result = await this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
+      this.analysisCoordinator.recordAnalysisSnapshot(editor.document, analyzeRequest.customDiagnostics, result.resultCount);
+      this.logTelemetryUsage('command/analyzePrompt/result', {
+        outcome: 'success',
+        resultCount: result.resultCount,
+        durationMs: result.duration,
+        customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+      });
+      await this.analysisCoordinator.completeAnalysis(editor.document.uri, result);
+    } catch (error) {
+      this.logTelemetryError('command/analyzePrompt/result', error, { outcome: 'failed' });
+      void vscode.window.showErrorMessage('Prompt analysis failed. See output for details.');
+    }
+  }
+
+  private async handleFixDiagnosticsCommand(): Promise<void> {
+    this.logTelemetryUsage('command/fixDiagnostics');
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noActiveEditor' });
+      return;
+    }
+
+    const targetUri = editor.document.uri;
+    const initialText = editor.document.getText();
+    const diagnostics = this.getExtensionDiagnostics(targetUri)
+      .slice()
+      .sort((a, b) => {
+        if (a.range.start.line !== b.range.start.line) {
+          return a.range.start.line - b.range.start.line;
+        }
+        return a.range.start.character - b.range.start.character;
+      });
+
+    if (diagnostics.length === 0) {
+      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noDiagnostics' });
+      void vscode.window.showInformationMessage('No diagnostics found for the active file. Run Analyze first.');
+      return;
+    }
+
+    const fixableDiagnostics = diagnostics.filter(diagnostic => !this.isNonFixableDiagnostic(diagnostic));
+    if (fixableDiagnostics.length === 0) {
+      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'nonFixableDiagnosticsOnly' });
+      const action = await vscode.window.showInformationMessage(
+        'Fix Diagnostics is unavailable for LLM analysis error diagnostics. Run Analyze again.',
+        ACTION_ANALYZE_AGAIN,
+      );
+      if (action === ACTION_ANALYZE_AGAIN) {
+        await vscode.commands.executeCommand('chatCustomizationsEvaluations.analyzePrompt');
+      }
+      return;
+    }
+
+    await vscode.window.showTextDocument(editor.document, { preview: false, preserveFocus: false });
+
+    const query = this.buildFixDiagnosticsChatQuery(editor.document, fixableDiagnostics);
+    await vscode.commands.executeCommand('workbench.action.chat.open', {
+      query,
+      isPartialQuery: false,
+    });
+
+    const hasImprovements = await this.waitForDocumentImprovements(
+      targetUri,
+      initialText,
+      ExtensionRuntime.FIX_DIAGNOSTICS_IMPROVEMENT_TIMEOUT_MS,
+    );
+    if (!hasImprovements) {
+      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noChangesDetected' });
+      return;
+    }
+
+    const skillContext = this.resolveSkillContext({ uri: targetUri });
+    if (!skillContext) {
+      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noSkillContext' });
+      return;
+    }
+
+    await handlePostFixDiagnosticsFlow(skillContext);
+    this.logTelemetryUsage('command/fixDiagnostics/result', {
+      outcome: 'success',
+      diagnosticsCount: fixableDiagnostics.length,
+    });
+  }
+
+  private async handleAnalyzePromptFromCustomizationCommand(obj: unknown): Promise<void> {
+    this.logTelemetryUsage('command/analyzePromptFromCustomization');
+    this.outputChannel.appendLine(`customization obj : ${JSON.stringify(obj)}`);
+    const uri = this.getCustomizationUri(obj);
+    if (!uri) {
+      this.outputChannel.appendLine('[Analyze Prompt From Customization] Missing URI in command arguments');
+      this.logTelemetryUsage('command/analyzePromptFromCustomization/result', { outcome: 'missingUri' });
+      void vscode.window.showWarningMessage('Unable to analyze prompt: no URI was provided by the customization item.');
+      return;
+    }
+
+    const analyzeRequest: AnalyzeRequest = {
+      uri: uri.toString(),
+      customDiagnostics: this.getCustomDiagnostics(),
+    };
+
+    const currentSnapshot = await this.analysisCoordinator.getCurrentAnalysisSnapshot(uri, analyzeRequest.customDiagnostics);
+    if (currentSnapshot.isFresh) {
+      if (currentSnapshot.diagnostics.length > 0) {
+        await this.analysisCoordinator.focusExistingDiagnostics(uri);
+        this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
+          outcome: 'alreadyCurrentWithDiagnostics',
+          resultCount: currentSnapshot.diagnostics.length,
+          customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+        });
+        vscode.window.showInformationMessage('Analysis is already up to date.');
+        return;
+      }
+      await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
+      this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
+        outcome: 'alreadyCurrentNoIssues',
+        resultCount: currentSnapshot.resultCount ?? 0,
+        customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+      });
+      vscode.window.showInformationMessage('Analysis is already up to date: no issues found.');
+      return;
+    }
+
+    this.analysisCoordinator.beginAnalysis(uri.toString());
+    this.analysisCoordinator.markAnalysisStage('Submitting analysis request...');
+    try {
+      const result = await this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', analyzeRequest);
+      this.analysisCoordinator.recordAnalysisSnapshot(currentSnapshot.document, analyzeRequest.customDiagnostics, result.resultCount);
+      await vscode.window.showTextDocument(currentSnapshot.document, { preview: false, preserveFocus: false });
+
+      await this.analysisCoordinator.completeAnalysis(uri, result);
+      this.logTelemetryUsage('command/analyzePromptFromCustomization/result', {
+        outcome: 'success',
+        resultCount: result.resultCount,
+        durationMs: result.duration,
+        customDiagnosticsCount: analyzeRequest.customDiagnostics?.length ?? 0,
+      });
+    } catch (error) {
+      this.logTelemetryError('command/analyzePromptFromCustomization/result', error, { outcome: 'failed' });
+      void vscode.window.showErrorMessage('Prompt analysis failed. See output for details.');
+    }
   }
 
   private getExtensionDiagnostics(uri: vscode.Uri): vscode.Diagnostic[] {
