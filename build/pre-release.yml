@@ -23,6 +23,15 @@ extends:
       - script: npm run bundle
         displayName: Bundle for Production
 
+      - script: >
+          node ./scripts/prepare-pre-release.js
+        displayName: Generate package.json
+
+      - script: |
+          mv ./package.json ./package.json.bak
+          mv ./package.insiders.json ./package.json
+        displayName: Override package.json
+
     tsa:
       config:
         areaPath: "Visual Studio Code Miscellaneous Extensions"
