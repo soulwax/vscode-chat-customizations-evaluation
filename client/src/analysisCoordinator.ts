@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import * as vscode from 'vscode';
 import {
     ACTION_ANALYZE_AGAIN,
-    ACTION_FIX_DIAGNOSTICS, ACTION_SHOW_PROBLEMS
+    ACTION_FIX_DIAGNOSTICS
 } from './strings';
 import type {
     AnalysisSnapshot,
@@ -206,6 +206,9 @@ export class AnalysisCoordinator {
         }, STATUS_BAR_COMPLETION_DURATION_MS);
         this.updateAnalysisStatusBar();
 
+        // Open Problems as soon as analysis finishes so results are visible without another click.
+        await vscode.commands.executeCommand('workbench.actions.view.problems');
+
         const filename = path.basename(uri.fsPath);
         const durationText = state ? ` in ${this.formatDurationMs(result.duration)}` : '';
         if (result.resultCount === 0) {
@@ -333,12 +336,10 @@ export class AnalysisCoordinator {
 
         void (async () => {
             const actions = hasNonFixableDiagnostics
-                ? [ACTION_SHOW_PROBLEMS, ACTION_ANALYZE_AGAIN]
-                : [ACTION_SHOW_PROBLEMS, ACTION_FIX_DIAGNOSTICS];
+                ? [ACTION_ANALYZE_AGAIN]
+                : [ACTION_FIX_DIAGNOSTICS];
             const action = await vscode.window.showInformationMessage(message, ...actions);
-            if (action === ACTION_SHOW_PROBLEMS) {
-                await vscode.commands.executeCommand('workbench.actions.view.problems');
-            } else if (action === ACTION_ANALYZE_AGAIN) {
+            if (action === ACTION_ANALYZE_AGAIN) {
                 await vscode.commands.executeCommand('chatCustomizationsEvaluations.analyzePrompt');
             } else if (action === ACTION_FIX_DIAGNOSTICS) {
                 await vscode.commands.executeCommand('chatCustomizationsEvaluations.fixDiagnostics');
