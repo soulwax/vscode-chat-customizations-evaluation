@@ -126,13 +126,13 @@
       },
       {
         "command": "chatCustomizationsEvaluations.wazaCreateEval",
-        "title": "Create Waza Eval Scaffold",
+        "title": "Create Waza Eval Scaffold For SKILL File",
         "category": "Chat Customizations Evaluations",
         "icon": "$(new-file)"
       },
       {
         "command": "chatCustomizationsEvaluations.wazaRunEval",
-        "title": "Run Waza Evaluation",
+        "title": "Run Waza Evaluation For SKILL File",
         "category": "Chat Customizations Evaluations",
         "icon": "$(play)"
       },
@@ -185,7 +185,7 @@
         {
           "command": "chatCustomizationsEvaluations.wazaRunEvalFromFile",
           "group": "inline",
-          "when": "resourceFilename == eval.yaml"
+          "when": "resourceFilename == wazaEval.yaml"
         }
       ],
       "chat/customizations/item": [
@@ -213,7 +213,7 @@
     ],
     "yamlValidation": [
       {
-        "fileMatch": "eval.yaml",
+        "fileMatch": "**/{eval,wazaEval}.yaml",
         "url": "https://raw.githubusercontent.com/microsoft/waza/refs/heads/main/schemas/eval.schema.json"
       }
     ]
