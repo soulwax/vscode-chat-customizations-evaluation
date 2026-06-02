@@ -344,9 +344,9 @@ This guide explains how analysis and diagnostics fixing work in Chat Customizati
 - Run Chat Customizations Evaluations: Analyze from the command palette.
 - The extension runs LLM analysis and publishes diagnostics to the Problems panel.
 
-## Fix Diagnostics
+## Implement suggestions
 
-- Run Chat Customizations Evaluations: Fix Diagnostics.
+- Run Chat Customizations Evaluations: Implement suggestions.
 - The extension sends current diagnostics to the fix skill and applies targeted edits.
 
 ## Full Guide
