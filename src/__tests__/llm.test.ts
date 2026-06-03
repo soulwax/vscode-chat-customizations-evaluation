@@ -202,6 +202,27 @@ describe('LLMAnalyzer', () => {
       expect(results.some(r => r.code === 'llm-parse-error')).toBe(true);
     });
 
+    it('should serialize document text before embedding it in the LLM prompt', async () => {
+      const mockProxy = vi.fn().mockResolvedValue({ text: '{}' });
+      analyzer.setProxyFn(mockProxy);
+
+      const promptText = [
+        'Test prompt text containing unescaped json-breaking payload:',
+        '"quote"',
+        '\t tabbed text',
+        '\\n newline sequence',
+        '</script> <svg onload=alert(1)>',
+      ].join('\n');
+
+      const doc = makeDoc(promptText);
+      await analyzer.analyze(doc);
+
+      const sentPrompt = mockProxy.mock.calls[0][0].prompt;
+      expect(sentPrompt).toContain('<DOCUMENT_TO_ANALYZE_JSON_STRING>');
+      expect(sentPrompt).toContain(JSON.stringify(promptText));
+      expect(sentPrompt).not.toContain(`<DOCUMENT_TO_ANALYZE>\n${promptText}\n</DOCUMENT_TO_ANALYZE>`);
+    });
+
     it('should handle proxy errors gracefully', async () => {
       const mockProxy = vi.fn().mockResolvedValue({ text: '{}', error: 'Model unavailable' });
       analyzer.setProxyFn(mockProxy);
