@@ -841,6 +841,15 @@ class ExtensionRuntime {
 
     this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, `Looking for user-selected model: ${userModel}`);
     this.outputChannel.appendLine(`[LLM Proxy] Looking for user-selected model: ${userModel}`);
+    const copilotModels = await vscode.lm.selectChatModels({ vendor: 'copilot', family: userModel });
+    if (copilotModels.length > 0) {
+      const selectedModel = copilotModels[0];
+      this.analysisCoordinator?.markAnalysisStageWithRequestCount(analysisUri, `Using user-selected Copilot model: ${selectedModel.name}`);
+      this.outputChannel.appendLine(`[LLM Proxy] User model Copilot matches found: ${copilotModels.length}`);
+      this.outputChannel.appendLine(`[LLM Proxy] Using user-selected Copilot model: ${selectedModel.name} (${selectedModel.vendor}/${selectedModel.family})`);
+      return selectedModel;
+    }
+
     const models = await vscode.lm.selectChatModels({ family: userModel });
     this.outputChannel.appendLine(`[LLM Proxy] User model matches found: ${models.length}`);
     if (models.length > 0) {
@@ -894,13 +903,19 @@ class ExtensionRuntime {
 
       const text = await this.collectStreamedResponseText(response, request.uri);
 
+      if (!text.trim()) {
+        const error = 'Language model returned an empty response.';
+        this.outputChannel.appendLine(`[LLM Proxy] Error: ${error}`);
+        return { text: '', error };
+      }
+
       this.analysisCoordinator?.markAnalysisStageWithRequestCount(request.uri, 'Processing Copilot response...');
 
       return { text };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
+      const message = error instanceof Error ? error.message : String(error);
       this.outputChannel.appendLine(`[LLM Proxy] Error: ${message}`);
-      return { text: '{}', error: `vscode.lm request failed: ${message}` };
+      return { text: '', error: `vscode.lm request failed: ${message}` };
     } finally {
       clearTimeout(timeout);
       cts.dispose();
