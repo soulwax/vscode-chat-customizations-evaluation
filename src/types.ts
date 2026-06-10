@@ -63,15 +63,11 @@ export interface LLMCognitiveLoadResponse {
     relevant_text: string;
     suggestion: string;
   }[];
-  overall_complexity?: 'low' | 'medium' | 'high' | 'very-high';
 }
 
 export interface LLMCoverageResponse {
-  coverage_analysis?: {
-    coverage_gaps?: { gap: string; relevant_text: string; impact: 'high' | 'medium' | 'low'; suggestion: string }[];
-    missing_error_handling?: { scenario: string; relevant_text: string; suggestion: string }[];
-    overall_coverage?: 'comprehensive' | 'adequate' | 'limited' | 'minimal';
-  };
+  coverage_gaps?: { gap: string; relevant_text: string; impact: 'high' | 'medium' | 'low'; suggestion: string }[];
+  missing_error_handling?: { scenario: string; relevant_text: string; suggestion: string }[];
 }
 
 /** Combined LLM response for single-call analysis. */
@@ -79,11 +75,9 @@ export interface LLMCombinedAnalysisResponse {
   contradictions?: LLMContradictionResponse['contradictions'];
   ambiguity_issues?: LLMAmbiguityResponse['issues'];
   persona_issues?: LLMPersonaResponse['issues'];
-  cognitive_load?: {
-    issues?: LLMCognitiveLoadResponse['issues'];
-    overall_complexity?: LLMCognitiveLoadResponse['overall_complexity'];
-  };
-  coverage_analysis?: LLMCoverageResponse['coverage_analysis'];
+  cognitive_load?: LLMCognitiveLoadResponse['issues'];
+  coverage_gaps?: LLMCoverageResponse['coverage_gaps'];
+  missing_error_handling?: LLMCoverageResponse['missing_error_handling'];
   composition_conflicts?: {
     summary: string;
     instruction1: string;

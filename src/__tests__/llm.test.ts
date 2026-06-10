@@ -164,8 +164,9 @@ describe('LLMAnalyzer', () => {
           }],
           ambiguity_issues: [],
           persona_issues: [],
-          cognitive_load: { issues: [], overall_complexity: 'low' },
-          coverage_analysis: {},
+          cognitive_load: [],
+          coverage_gaps: [],
+          missing_error_handling: [],
         }),
       });
       analyzer.setProxyFn(mockProxy);
@@ -264,8 +265,9 @@ describe('LLMAnalyzer', () => {
             severity: 'warning',
             suggestion: 'Pick one tone',
           }],
-          cognitive_load: { issues: [], overall_complexity: 'low' },
-          coverage_analysis: {},
+          cognitive_load: [],
+          coverage_gaps: [],
+          missing_error_handling: [],
         }),
       });
       analyzer.setProxyFn(mockProxy);
@@ -287,8 +289,9 @@ describe('LLMAnalyzer', () => {
             suggestion: 'Define what professional means',
           }],
           persona_issues: [],
-          cognitive_load: { issues: [], overall_complexity: 'low' },
-          coverage_analysis: {},
+          cognitive_load: [],
+          coverage_gaps: [],
+          missing_error_handling: [],
         }),
       });
       analyzer.setProxyFn(mockProxy);
@@ -307,8 +310,9 @@ describe('LLMAnalyzer', () => {
           contradictions: [],
           ambiguity_issues: [],
           persona_issues: [],
-          cognitive_load: { issues: [], overall_complexity: 'low' },
-          coverage_analysis: {},
+          cognitive_load: [],
+          coverage_gaps: [],
+          missing_error_handling: [],
           custom_diagnostics: [{
             title: 'Output Schema Validation',
             description: 'The prompt does not define the expected JSON schema for output.',
@@ -337,8 +341,9 @@ describe('LLMAnalyzer', () => {
           contradictions: [],
           ambiguity_issues: [],
           persona_issues: [],
-          cognitive_load: { issues: [], overall_complexity: 'low' },
-          coverage_analysis: {},
+          cognitive_load: [],
+          coverage_gaps: [],
+          missing_error_handling: [],
           other_diagnostics: [{
             title: 'Unsafe Default Assumption',
             description: 'The prompt assumes missing data should be fabricated.',
