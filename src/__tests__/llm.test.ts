@@ -283,7 +283,7 @@ describe('LLMAnalyzer', () => {
         text: JSON.stringify({
           contradictions: [],
           ambiguity_issues: [{
-            text: 'be professional',
+            relevant_text: 'be professional',
             type: 'term',
             severity: 'info',
             suggestion: 'Define what professional means',

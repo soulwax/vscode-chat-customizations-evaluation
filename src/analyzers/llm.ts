@@ -176,6 +176,7 @@ Quality bar for findings:
 - Do NOT report speculative, stylistic, or low-impact nits.
 - If evidence is weak or ambiguous, do not include that finding.
 - It is valid to return no issues in any or all categories when the prompt is already strong.
+- The relevant text should be a whole phrase from the prompt.
 
 Perform ALL of the following analyses:
 
@@ -204,7 +205,7 @@ Respond with a single JSON object in this exact format:
   ],
   "ambiguity_issues": [
     {
-      "text": "exact ambiguous phrase from the prompt",
+      "relevant_text": "exact ambiguous phrase from the prompt",
       "type": "quantifier"|"reference"|"term"|"scope"|"other",
       "problem": "What makes this ambiguous — describe the multiple interpretations a model could take",
       "suggestion": "A concrete rewrite that removes the ambiguity, e.g. replace 'a few' with '2-3'"
@@ -417,10 +418,10 @@ ${previousDiagnosticsPrompt}`;
       const problem = issue.problem ? `${issue.problem} ` : '';
       results.push(this.createDiagnostic(doc, {
         code: 'ambiguity-llm',
-        message: `Ambiguous: "${issue.text}". ${problem}Suggestion: ${issue.suggestion}`,
+        message: `Ambiguous: "${issue.relevant_text}". ${problem}Suggestion: ${issue.suggestion}`,
         analyzer: 'ambiguity-detection',
         suggestion: issue.suggestion,
-        relevantText: issue.text,
+        relevantText: issue.relevant_text,
       }));
     }
   }

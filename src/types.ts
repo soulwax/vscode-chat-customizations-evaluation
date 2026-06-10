@@ -39,7 +39,7 @@ export interface LLMContradictionResponse {
 
 export interface LLMAmbiguityResponse {
   issues?: {
-    text: string;
+    relevant_text: string;
     type: 'quantifier' | 'reference' | 'term' | 'scope' | 'other';
     problem: string;
     suggestion: string;
