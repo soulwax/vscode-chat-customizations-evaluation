@@ -109,7 +109,7 @@
     },
     "commands": [
       {
-        "command": "chatCustomizationsEvaluations.analyzePrompt",
+        "command": "chatCustomizationsEvaluations.analyzePromptUsingSlashCommand",
         "title": "Analyze",
         "category": "Chat Customizations Evaluations"
       },
@@ -123,6 +123,11 @@
         "title": "Analyze",
         "category": "Chat Customizations Evaluations",
         "icon": "$(beaker)"
+      },
+      {
+        "command": "chatCustomizationsEvaluations.analyzePrompt",
+        "title": "Analyze",
+        "category": "Chat Customizations Evaluations"
       },
       {
         "command": "chatCustomizationsEvaluations.wazaCreateEval",
@@ -163,6 +168,10 @@
     "menus": {
       "commandPalette": [
         {
+          "command": "chatCustomizationsEvaluations.analyzePromptUsingSlashCommand",
+          "when": "false"
+        },
+        {
           "command": "chatCustomizationsEvaluations.analyzePromptFromCustomization",
           "when": "false"
         },
@@ -173,7 +182,7 @@
       ],
       "editor/content": [
         {
-          "command": "chatCustomizationsEvaluations.analyzePrompt",
+          "command": "chatCustomizationsEvaluations.analyzePromptUsingSlashCommand",
           "group": "inline",
           "when": "!chatCustomizationsEvaluations.hasDiagnostics && !chatCustomizationsEvaluations.isAnalyzing && (editorLangId == prompt || editorLangId == chatagent || editorLangId == skill || editorLangId == instructions || resourceFilename == AGENTS.md)"
         },
@@ -207,6 +216,9 @@
       ]
     },
     "chatSkills": [
+      {
+        "path": "./skills/analyze-prompt/SKILL.md"
+      },
       {
         "path": "./skills/fix-customization-evaluation-diagnostics/SKILL.md"
       }

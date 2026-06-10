@@ -340,7 +340,7 @@ export class AnalysisCoordinator {
                 : [ACTION_FIX_DIAGNOSTICS];
             const action = await vscode.window.showInformationMessage(message, ...actions);
             if (action === ACTION_ANALYZE_AGAIN) {
-                await vscode.commands.executeCommand('chatCustomizationsEvaluations.analyzePrompt');
+                await vscode.commands.executeCommand('chatCustomizationsEvaluations.analyzePromptUsingSlashCommand');
             } else if (action === ACTION_FIX_DIAGNOSTICS) {
                 await vscode.commands.executeCommand('chatCustomizationsEvaluations.fixDiagnostics');
             }

@@ -36,6 +36,7 @@ class ExtensionRuntime {
   private static readonly LLM_REQUEST_TIMEOUT_MS = 30_000;
   private static readonly WAZA_CREATE_TIMEOUT_MS = 30_000;
   private static readonly FIX_DIAGNOSTICS_IMPROVEMENT_TIMEOUT_MS = 5 * 60_000;
+  private static readonly SLASH_ANALYZE_PENDING_TIMEOUT_MS = 30_000;
 
   private client: LanguageClient | undefined;
   private outputChannel!: vscode.OutputChannel;
@@ -392,10 +393,22 @@ class ExtensionRuntime {
 
   private registerCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptUsingSlashCommand', async (obj) => this.handleAnalyzePromptUsingSlashCommand(obj)),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async (obj) => this.handleAnalyzePromptCommand(obj)),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async (diagnostics?: vscode.Diagnostic[]) => this.handleFixDiagnosticsCommand(diagnostics)),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptFromCustomization', async (obj) => this.handleAnalyzePromptFromCustomizationCommand(obj)),
     );
+  }
+
+  private async handleAnalyzePromptUsingSlashCommand(obj?: unknown): Promise<void> {
+    this.logTelemetryUsage('command/analyzePromptUsingSlashCommand');
+    const uri = this.getCustomizationUri(obj) ?? vscode.window.activeTextEditor?.document.uri;
+    if (!uri) {
+      this.logTelemetryUsage('command/analyzePromptUsingSlashCommand/result', { outcome: 'noActiveEditor' });
+      return;
+    }
+    await this.openAnalyzePromptChat(uri);
+    this.logTelemetryUsage('command/analyzePromptUsingSlashCommand/result', { outcome: 'openedChat' });
   }
 
   private async handleAnalyzePromptCommand(obj?: unknown): Promise<void> {
@@ -483,10 +496,19 @@ class ExtensionRuntime {
       return;
     }
 
-    await this.runAnalyzeWorkflow({
-      uri,
-      resultEventName: 'command/analyzePromptFromCustomization/result',
-      revealDocumentAfterSuccess: true,
+    await this.openAnalyzePromptChat(uri);
+    this.logTelemetryUsage('command/analyzePromptFromCustomization/result', { outcome: 'openedChat' });
+  }
+
+  private async openAnalyzePromptChat(targetUri?: vscode.Uri): Promise<void> {
+    if (targetUri) {
+      const document = await vscode.workspace.openTextDocument(targetUri);
+      await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+    }
+    await vscode.commands.executeCommand('workbench.action.chat.newChat');
+    await vscode.commands.executeCommand('workbench.action.chat.open', {
+      query: '/analyze-prompt',
+      isPartialQuery: false,
     });
   }
 
@@ -627,7 +649,7 @@ class ExtensionRuntime {
       ACTION_ANALYZE_AGAIN,
     );
     if (action === ACTION_ANALYZE_AGAIN) {
-      await vscode.commands.executeCommand('chatCustomizationsEvaluations.analyzePrompt');
+      await vscode.commands.executeCommand('chatCustomizationsEvaluations.analyzePromptDirect');
     }
 
     return true;
