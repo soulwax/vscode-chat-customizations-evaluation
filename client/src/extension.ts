@@ -228,7 +228,6 @@ class ExtensionRuntime {
     const fixableDiagnostics = allDiagnostics.filter(
       d => !this.isNonFixableDiagnostic(d) && this.rangesOverlap(d.range, range),
     );
-    this.outputChannel.appendLine(`[Code Actions] Found fixable diagnostics: ${fixableDiagnostics.length}`);
     if (fixableDiagnostics.length === 0) {
       return [];
     }
