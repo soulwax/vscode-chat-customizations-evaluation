@@ -707,6 +707,7 @@ class ExtensionRuntime {
         ` - lineText: ${lineText}`,
         ` - message: ${message || 'n/a'}`,
         ...(shouldIncludeSuggestion ? [`  suggestion: ${suggestion}`] : []),
+        `\n`
       ].join('\n');
     }).join('\n');
 
