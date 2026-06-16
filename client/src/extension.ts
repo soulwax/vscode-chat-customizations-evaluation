@@ -314,7 +314,7 @@ class ExtensionRuntime {
     context.subscriptions.push(
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptUsingSlashCommand', async (obj) => this.handleAnalyzePromptUsingSlashCommand(obj)),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async (obj) => this.analysisCoordinator.handleAnalyzePromptCommand({
-        candidateUri: this.getCustomizationUri(obj),
+        candidateUri: this.urlResolver.getCustomizationUri(obj),
         logTelemetryUsage: (eventName, data) => this.logTelemetryUsage(eventName, data),
         logTelemetryError: (eventName, error, data) => this.logTelemetryError(eventName, error, data),
         resultEventName: 'command/analyzePrompt/result',
