@@ -40,7 +40,7 @@ class WazaOrchestrator {
             getOutputChannel: () => this.requireDeps().outputChannel,
             getWazaCommand: () => this.getWazaCommand(),
             getManagedWazaBinaryPath: () => this.getManagedWazaBinaryPath(),
-            getExtensionStoragePath: () => this.requireDeps().extensionContext.globalStorageUri.fsPath,
+            installManagedWazaBinary: async () => await this.installManagedWazaBinary(),
         });
     }
 
@@ -294,6 +294,10 @@ class WazaOrchestrator {
         const { extensionContext } = this.requireDeps();
         const fileName = process.platform === 'win32' ? 'waza.exe' : 'waza';
         return path.join(extensionContext.globalStorageUri.fsPath, 'bin', fileName);
+    }
+
+    private async installManagedWazaBinary(): Promise<void> {
+        await vscode.commands.executeCommand('chatCustomizationsEvaluations.wazaDownloadBinary');
     }
 
     private inferSkillProjectRoot(uri: vscode.Uri, skillDirPath: string): string {
