@@ -26,7 +26,6 @@ export class ModelPicker {
                 return undefined;
             }
             this.cachedModel = model;
-            this.log(`Using model: ${model.name}`);
             this.outputChannel.appendLine(`[LLM Proxy] Using model: ${model.name} (${model.vendor}/${model.family})`);
             return model;
         } finally {
@@ -41,19 +40,16 @@ export class ModelPicker {
 
         const configured = vscode.workspace.getConfiguration('chatCustomizationsEvaluations').get<string>('model', '').trim();
         if (configured) {
-            this.log(`Looking for user-selected model: ${configured}`);
             const userSelected = await this.selectFirstModel(
                 () => vscode.lm.selectChatModels({ family: configured }),
                 'User model matches',
             );
             if (userSelected) {
-                this.log(`Using user-selected model: ${userSelected.name} (${userSelected.vendor}/${userSelected.family})`);
                 return userSelected;
             }
             this.log('User model not found, falling back to default selection...');
         }
 
-        this.log('Discovering Copilot models (claude-sonnet-4.6)...');
         this.outputChannel.appendLine('[LLM Proxy] Selecting chat models...');
 
         const claude = await this.selectFirstModel(
@@ -64,7 +60,6 @@ export class ModelPicker {
             return claude;
         }
 
-        this.log('No claude-sonnet-4.6 model found, trying any Copilot model...');
         const anyCopilot = await this.selectFirstModel(
             () => vscode.lm.selectChatModels({ vendor: 'copilot' }),
             'Any Copilot models',
@@ -73,7 +68,6 @@ export class ModelPicker {
             return anyCopilot;
         }
 
-        this.log('No Copilot-only match, trying all available models...');
         return this.selectFirstModel(() => vscode.lm.selectChatModels(), 'Any models');
     }
 
