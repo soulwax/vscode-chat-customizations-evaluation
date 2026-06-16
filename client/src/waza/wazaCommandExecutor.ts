@@ -30,7 +30,7 @@ export class WazaCommandExecutor {
                     stdout: result.stdout,
                     stderr: [
                         result.stderr,
-                        `Managed waza binary was not found after download attempt: ${managedBinary}`,
+                        `Managed Waza binary was not found after download attempt: ${managedBinary}`,
                     ].filter(Boolean).join('\n'),
                     exitCode: 1,
                 };

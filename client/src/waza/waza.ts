@@ -106,7 +106,7 @@ class WazaOrchestrator {
         await vscode.commands.executeCommand('vscode.open', evalUri);
 
         const action = await vscode.window.showInformationMessage(
-            `✓ Created waza eval scaffold for ${skillContext.skillName}. ${scaffold.createdFiles.length} files created.`,
+            `✓ Created Waza eval scaffold for ${skillContext.skillName}. ${scaffold.createdFiles.length} files created.`,
             'Open Eval File',
             'View Output'
         );
@@ -127,7 +127,7 @@ class WazaOrchestrator {
         const skillContext = this.resolveSkillContext(obj);
         if (!skillContext) {
             logTelemetryUsage('command/wazaRunEval/result', { outcome: 'noSkillContext' });
-            void vscode.window.showWarningMessage('Open a SKILL.md file (or select a customization item) to run waza evaluation.');
+            void vscode.window.showWarningMessage('Open a SKILL.md file (or select a customization item) to run Waza evaluation.');
             return;
         }
 
@@ -135,7 +135,7 @@ class WazaOrchestrator {
         if (!evalPath) {
             logTelemetryUsage('command/wazaRunEval/result', { outcome: 'missingEval' });
             const action = await vscode.window.showWarningMessage(
-                `No waza eval file found for ${skillContext.skillName}.`,
+                `No Waza eval file found for ${skillContext.skillName}.`,
                 'Create Eval'
             );
 
@@ -161,7 +161,7 @@ class WazaOrchestrator {
 
         if (!editor || !this.isSupportedEvalFile(editor.document.fileName)) {
             logTelemetryUsage('command/wazaRunEvalFromFile/result', { outcome: 'invalidActiveFile' });
-            void vscode.window.showWarningMessage('This command requires a waza eval file to be active.');
+            void vscode.window.showWarningMessage('This command requires a Waza eval file to be active.');
             return;
         }
 
@@ -174,7 +174,7 @@ class WazaOrchestrator {
         if (!skillFilePath) {
             outputChannel.appendLine('[Waza] Could not find SKILL.md');
             logTelemetryUsage('command/wazaRunEvalFromFile/result', { outcome: 'missingSkillFile' });
-            void vscode.window.showWarningMessage('Could not find SKILL.md associated with this waza eval file.');
+            void vscode.window.showWarningMessage('Could not find SKILL.md associated with this Waza eval file.');
             return;
         }
 
@@ -202,12 +202,12 @@ class WazaOrchestrator {
         logTelemetryUsage('command/wazaDownloadBinary');
         try {
             outputChannel.show(true);
-            outputChannel.appendLine('[Waza] Downloading latest waza binary...');
+            outputChannel.appendLine('[Waza] Downloading latest Waza binary...');
 
             const installPath = await vscode.window.withProgress(
                 {
                     location: vscode.ProgressLocation.Notification,
-                    title: 'Downloading waza binary',
+                    title: 'Downloading Waza binary',
                     cancellable: false,
                 },
                 async (progress) => {
@@ -221,12 +221,12 @@ class WazaOrchestrator {
 
             outputChannel.appendLine(`[Waza] Installed to ${installPath}`);
             logTelemetryUsage('command/wazaDownloadBinary/result', { outcome: 'success' });
-            void vscode.window.showInformationMessage(`waza binary downloaded and configured: ${installPath}`);
+            void vscode.window.showInformationMessage(`Waza binary downloaded and configured: ${installPath}`);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
             outputChannel.appendLine(`[Waza] Download failed: ${message}`);
             logTelemetryError('command/wazaDownloadBinary/result', error, { outcome: 'failed' });
-            void vscode.window.showErrorMessage(`Failed to download waza binary: ${message}`);
+            void vscode.window.showErrorMessage(`Failed to download Waza binary: ${message}`);
         }
     }
 
@@ -417,7 +417,7 @@ class WazaOrchestrator {
         addEvalCandidates(path.join(context.skillDirPath, 'evals'));
         addEvalCandidates(context.skillDirPath);
 
-        outputChannel.appendLine(`[Waza] Looking for waza eval file for ${context.skillName}`);
+        outputChannel.appendLine(`[Waza] Looking for Waza eval file for ${context.skillName}`);
         for (const candidate of candidates) {
             outputChannel.appendLine(`[Waza] Eval candidate: ${candidate}`);
             if (fs.existsSync(candidate)) {
@@ -562,7 +562,7 @@ class WazaOrchestrator {
 
         const tag = releases.find((r) => typeof r.tag_name === 'string' && r.tag_name.startsWith('v'))?.tag_name;
         if (!tag) {
-            throw new Error('Could not determine latest waza release tag');
+            throw new Error('Could not determine latest Waza release tag');
         }
 
         return tag;
@@ -694,7 +694,7 @@ class WazaOrchestrator {
         if (recommendationReportPath) {
             outputChannel.appendLine(`[Waza] Recommendation report saved to: ${recommendationReportPath}`);
             const action = await vscode.window.showErrorMessage(
-                'waza evaluation failed. A recommendation document was generated.',
+                'Waza evaluation failed. A recommendation document was generated.',
                 'Open Recommendation',
             );
             if (action === 'Open Recommendation') {
@@ -703,7 +703,7 @@ class WazaOrchestrator {
             }
         } else {
             const action = await vscode.window.showErrorMessage(
-                'waza evaluation failed. See "Chat Customizations Evaluations" output for details.',
+                'Waza evaluation failed. See "Chat Customizations Evaluations" output for details.',
                 'Show Output',
             );
             if (action === 'Show Output') {
@@ -723,7 +723,7 @@ class WazaOrchestrator {
                 outcome: 'success',
                 resultsFileCreated: false,
             });
-            void vscode.window.showInformationMessage(`waza evaluation completed for ${context.skillName}.`);
+            void vscode.window.showInformationMessage(`Waza evaluation completed for ${context.skillName}.`);
             return;
         }
 
@@ -731,7 +731,7 @@ class WazaOrchestrator {
         outputChannel.appendLine(`[Waza] Results saved to: ${resultsUri.toString()}`);
 
         const action = await vscode.window.showInformationMessage(
-            `waza evaluation completed for ${context.skillName}.`,
+            `Waza evaluation completed for ${context.skillName}.`,
             'View Results'
         );
 
@@ -771,7 +771,7 @@ class WazaOrchestrator {
             const resultsContent = await this.resolvePostEvalResultsContent(resultsFile, failureContext);
 
             const systemPrompt = [
-                'You are an expert evaluator for VS Code chat customizations and waza eval suites.',
+                'You are an expert evaluator for VS Code chat customizations and Waza eval suites.',
                 'Decide what should be updated next: task files, skill file, both, or neither.',
                 'Favor concrete, low-risk edits and reference evidence from eval results and file contents.',
                 'Respond in natural language markdown with concise sections and actionable next steps.',
@@ -1122,7 +1122,7 @@ class WazaOrchestrator {
         const create = 'Create Evals';
         const docs = 'Waza Docs';
         const action = await vscode.window.showInformationMessage(
-            `Diagnostics were fixed for ${context.skillName}. No waza eval file found. Create evals powered by waza now? You can also run the "Create Waza Eval Scaffold" command later.`,
+            `Diagnostics were fixed for ${context.skillName}. No Waza eval file found. Create evals powered by Waza now? You can also run the "Create Waza Eval Scaffold" command later.`,
             create,
             docs,
         );
@@ -1161,7 +1161,7 @@ class WazaOrchestrator {
         const runEval = 'Run Eval';
         const openDocs = 'Waza Docs';
         const notificationAction = await vscode.window.showInformationMessage(
-            `Created waza scaffold at ${relativeEvalPath}.${fileSummary}`,
+            `Created Waza scaffold at ${relativeEvalPath}.${fileSummary}`,
             runEval,
             openDocs,
         );
@@ -1192,7 +1192,7 @@ class WazaOrchestrator {
             return true;
         }
 
-        outputChannel.appendLine('[Waza] waza command unavailable; downloading managed binary.');
+        outputChannel.appendLine('[Waza] Waza command unavailable; downloading managed binary.');
 
         try {
             const installPath = await this.downloadAndInstallWazaBinary();
@@ -1203,7 +1203,7 @@ class WazaOrchestrator {
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
             outputChannel.appendLine(`[Waza] Failed to install managed binary: ${message}`);
-            void vscode.window.showErrorMessage(`Failed to install waza binary: ${message}`);
+            void vscode.window.showErrorMessage(`Failed to install Waza binary: ${message}`);
             return false;
         }
     }
@@ -1266,7 +1266,7 @@ class WazaOrchestrator {
             usedTemporaryWorkspaceFallback,
         });
         outputChannel.appendLine(`[Waza] eval scaffold failed\n${result.stderr || result.stdout}`);
-        void vscode.window.showErrorMessage('Failed to create waza eval scaffold. See "Chat Customizations Evaluations" output for details.');
+        void vscode.window.showErrorMessage('Failed to create Waza eval scaffold. See "Chat Customizations Evaluations" output for details.');
     }
 
     private logAndBuildScaffoldSummary(
