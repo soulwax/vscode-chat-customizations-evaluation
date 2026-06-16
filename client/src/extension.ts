@@ -35,7 +35,6 @@ type AnalysisSnapshot = Awaited<ReturnType<AnalysisCoordinator['getCurrentAnalys
 class ExtensionRuntime {
 
   private static readonly LLM_REQUEST_TIMEOUT_MS = 30_000;
-  private static readonly WAZA_CREATE_TIMEOUT_MS = 30_000;
   private static readonly FIX_DIAGNOSTICS_IMPROVEMENT_TIMEOUT_MS = 5 * 60_000;
 
   private client: LanguageClient | undefined;
@@ -230,7 +229,6 @@ class ExtensionRuntime {
     const fixableDiagnostics = allDiagnostics.filter(
       d => !this.isNonFixableDiagnostic(d) && this.rangesOverlap(d.range, range),
     );
-    this.outputChannel.appendLine(`[Code Actions] Found fixable diagnostics: ${fixableDiagnostics.length}`);
     if (fixableDiagnostics.length === 0) {
       return [];
     }
@@ -266,7 +264,6 @@ class ExtensionRuntime {
   private registerModelHandlers(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
       vscode.lm.onDidChangeChatModels(() => {
-        this.outputChannel.appendLine('[LLM Proxy] Models changed, clearing cache');
         this.cachedModel = undefined;
         this.modelSelectionPromise = undefined;
       })

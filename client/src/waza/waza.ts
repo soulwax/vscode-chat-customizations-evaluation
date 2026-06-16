@@ -187,7 +187,18 @@ class WazaOrchestrator {
             outputChannel.show(true);
             outputChannel.appendLine('[Waza] Downloading latest waza binary...');
 
-            const installPath = await this.downloadAndInstallWazaBinary();
+            const installPath = await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: 'Downloading waza binary',
+                    cancellable: false,
+                },
+                async (progress) => {
+                    progress.report({ message: 'Preparing download...' });
+                    return this.downloadAndInstallWazaBinary((message) => progress.report({ message }));
+                }
+            );
+
             const configuration = vscode.workspace.getConfiguration('chatCustomizationsEvaluations');
             await configuration.update('waza.command', installPath, vscode.ConfigurationTarget.Global);
 
@@ -439,8 +450,14 @@ class WazaOrchestrator {
         return { os, arch, fileName };
     }
 
-    private async downloadAndInstallWazaBinary(): Promise<string> {
+    private async downloadAndInstallWazaBinary(reportProgress?: (message: string) => void): Promise<string> {
         const { extensionContext, outputChannel } = this.requireDeps();
+        const report = (message: string): void => {
+            reportProgress?.(message);
+            outputChannel.appendLine(`[Waza] ${message}`);
+        };
+
+        report('Detecting platform and latest release...');
         const target = this.detectWazaAssetTarget();
         const tag = await this.fetchLatestWazaTag();
         const binaryUrl = `https://github.com/microsoft/waza/releases/download/${tag}/${target.fileName}`;
@@ -457,14 +474,23 @@ class WazaOrchestrator {
 
         outputChannel.appendLine(`[Waza] Target platform: ${target.os}/${target.arch}`);
         outputChannel.appendLine(`[Waza] Release tag: ${tag}`);
+
+        report(`Downloading ${target.fileName}...`);
         await this.downloadFile(binaryUrl, tempBinaryPath);
+
+        report('Downloading checksums...');
         await this.downloadFile(checksumsUrl, tempChecksumsPath);
 
+        report('Verifying checksum...');
         await this.verifyChecksum(tempBinaryPath, tempChecksumsPath, target.fileName);
+
+        report('Installing binary...');
         await fs.promises.copyFile(tempBinaryPath, binaryPath);
         if (target.os !== 'windows') {
             await fs.promises.chmod(binaryPath, 0o755);
         }
+
+        report('Download complete.');
 
         return binaryPath;
     }
