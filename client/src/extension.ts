@@ -9,12 +9,11 @@ import {
   RequestType,
 } from 'vscode-languageclient/node';
 import {
-  handlePostFixDiagnosticsFlow,
   initializeWaza,
   registerWazaCommands,
 } from './waza/waza';
 import {
-  ACTION_ANALYZE_AGAIN, ACTION_FIX_DIAGNOSTICS, NON_FIXABLE_DIAGNOSTIC_CODES,
+  ACTION_FIX_DIAGNOSTICS, NON_FIXABLE_DIAGNOSTIC_CODES,
   TELEMETRY_AUTH_TOKEN_ENV,
   TELEMETRY_ENDPOINT_ENV
 } from './strings';
@@ -25,6 +24,7 @@ import type {
   TelemetryData
 } from './types';
 import { AnalysisCoordinator } from './analysisCoordinator';
+import { FixDiagnosticsCoordinator } from './fixDiagnosticsCoordinator';
 import { ExtensionTelemetrySender } from './telemetry';
 import { UrlResolver } from './urlResolver';
 import { ModelPicker } from './modelPicker';
@@ -35,7 +35,6 @@ const NON_FIXABLE_DIAGNOSTIC_CODE_SET = new Set<string>(NON_FIXABLE_DIAGNOSTIC_C
 class ExtensionRuntime {
 
   private static readonly LLM_REQUEST_TIMEOUT_MS = 30_000;
-  private static readonly FIX_DIAGNOSTICS_IMPROVEMENT_TIMEOUT_MS = 5 * 60_000;
 
   private client: LanguageClient | undefined;
   private outputChannel!: vscode.OutputChannel;
@@ -43,6 +42,7 @@ class ExtensionRuntime {
   private extensionContext!: vscode.ExtensionContext;
   private telemetryLogger: vscode.TelemetryLogger | undefined;
   private analysisCoordinator!: AnalysisCoordinator;
+  private fixDiagnosticsCoordinator!: FixDiagnosticsCoordinator;
   private extensionDiagnosticCollection!: vscode.DiagnosticCollection;
   private readonly urlResolver = new UrlResolver();
   private readonly pendingDiagnosticEditsByUri = new Map<string, { fullDocument: boolean; ranges: vscode.Range[] }>();
@@ -93,6 +93,13 @@ class ExtensionRuntime {
       (request) => this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', request),
     );
     this.analysisCoordinator.initialize(context);
+    this.fixDiagnosticsCoordinator = new FixDiagnosticsCoordinator({
+      getDiagnosticsForUri: (uri) => this.getExtensionDiagnostics(uri),
+      isNonFixableDiagnostic: (diagnostic) => this.isNonFixableDiagnostic(diagnostic),
+      clearDiagnosticsForUri: (uri) => this.extensionDiagnosticCollection.set(uri, []),
+      resolveSkillContextForUri: (uri) => this.resolveSkillContext({ uri }),
+      logTelemetryUsage: (eventName, data) => this.logTelemetryUsage(eventName, data),
+    });
     this.modelPicker = new ModelPicker(this.outputChannel);
 
     this.telemetryLogger = this.createExtensionTelemetryLogger(context);
@@ -314,7 +321,7 @@ class ExtensionRuntime {
         resultEventName: 'command/analyzePrompt/result',
         revealDocumentAfterSuccess: false,
       })),
-      vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async (diagnostics?: vscode.Diagnostic[]) => this.handleFixDiagnosticsCommand(diagnostics)),
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async (diagnostics?: vscode.Diagnostic[]) => this.fixDiagnosticsCoordinator.handleFixDiagnosticsCommand(diagnostics)),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptFromCustomization', async (obj) => this.handleAnalyzePromptFromCustomizationCommand(obj)),
     );
   }
@@ -328,61 +335,6 @@ class ExtensionRuntime {
     }
     await this.openAnalyzePromptChat(uri);
     this.logTelemetryUsage('command/analyzePromptUsingSlashCommand/result', { outcome: 'openedChat' });
-  }
-
-  private async handleFixDiagnosticsCommand(scopedDiagnostics?: vscode.Diagnostic[]): Promise<void> {
-    this.logTelemetryUsage('command/fixDiagnostics');
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noActiveEditor' });
-      return;
-    }
-
-    const targetUri = editor.document.uri;
-    const initialText = editor.document.getText();
-
-    let fixableDiagnostics: vscode.Diagnostic[];
-    if (scopedDiagnostics && scopedDiagnostics.length > 0) {
-      fixableDiagnostics = scopedDiagnostics.filter(diagnostic => !this.isNonFixableDiagnostic(diagnostic));
-    } else {
-      const diagnostics = this.getSortedExtensionDiagnostics(targetUri);
-
-      if (diagnostics.length === 0) {
-        this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noDiagnostics' });
-        void vscode.window.showInformationMessage('No diagnostics found for the active file. Run Analyze first.');
-        return;
-      }
-
-      fixableDiagnostics = diagnostics.filter(diagnostic => !this.isNonFixableDiagnostic(diagnostic));
-    }
-    if (await this.handleNonFixableDiagnosticsOnly(fixableDiagnostics.length)) {
-      return;
-    }
-
-    await this.openFixDiagnosticsChat(editor.document, fixableDiagnostics);
-    this.extensionDiagnosticCollection.set(targetUri, []);
-
-    const hasImprovements = await this.waitForDocumentImprovements(
-      targetUri,
-      initialText,
-      ExtensionRuntime.FIX_DIAGNOSTICS_IMPROVEMENT_TIMEOUT_MS,
-    );
-    if (!hasImprovements) {
-      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noChangesDetected' });
-      return;
-    }
-
-    const skillContext = this.resolveSkillContext({ uri: targetUri });
-    if (!skillContext) {
-      this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'noSkillContext' });
-      return;
-    }
-
-    await handlePostFixDiagnosticsFlow(skillContext);
-    this.logTelemetryUsage('command/fixDiagnostics/result', {
-      outcome: 'success',
-      diagnosticsCount: fixableDiagnostics.length,
-    });
   }
 
   private async handleAnalyzePromptFromCustomizationCommand(obj: unknown): Promise<void> {
@@ -408,44 +360,6 @@ class ExtensionRuntime {
     await vscode.commands.executeCommand('workbench.action.chat.newChat');
     await vscode.commands.executeCommand('workbench.action.chat.open', {
       query: `/analyze-prompt ${targetUri?.toString() ?? ''}`,
-      isPartialQuery: false,
-    });
-  }
-
-  private getSortedExtensionDiagnostics(uri: vscode.Uri): vscode.Diagnostic[] {
-    return this.getExtensionDiagnostics(uri)
-      .slice()
-      .sort((a, b) => {
-        if (a.range.start.line !== b.range.start.line) {
-          return a.range.start.line - b.range.start.line;
-        }
-        return a.range.start.character - b.range.start.character;
-      });
-  }
-
-  private async handleNonFixableDiagnosticsOnly(fixableDiagnosticsCount: number): Promise<boolean> {
-    if (fixableDiagnosticsCount > 0) {
-      return false;
-    }
-
-    this.logTelemetryUsage('command/fixDiagnostics/result', { outcome: 'nonFixableDiagnosticsOnly' });
-    const action = await vscode.window.showInformationMessage(
-      'Implement suggestions is unavailable for LLM analysis error diagnostics. Run Analyze again.',
-      ACTION_ANALYZE_AGAIN,
-    );
-    if (action === ACTION_ANALYZE_AGAIN) {
-      await vscode.commands.executeCommand('chatCustomizationsEvaluations.analyzePromptDirect');
-    }
-
-    return true;
-  }
-
-  private async openFixDiagnosticsChat(document: vscode.TextDocument, diagnostics: vscode.Diagnostic[]): Promise<void> {
-    await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
-    const query = this.buildFixDiagnosticsChatQuery(document, diagnostics);
-    await vscode.commands.executeCommand('workbench.action.chat.newChat');
-    await vscode.commands.executeCommand('workbench.action.chat.open', {
-      query,
       isPartialQuery: false,
     });
   }
@@ -557,40 +471,6 @@ class ExtensionRuntime {
     return NON_FIXABLE_DIAGNOSTIC_CODE_SET.has(this.diagnosticCodeToString(diagnostic.code));
   }
 
-  private buildFixDiagnosticsChatQuery(document: vscode.TextDocument, diagnostics: vscode.Diagnostic[]): string {
-    const payload = diagnostics.map((diagnostic) => {
-      const startLine = diagnostic.range.start.line + 1;
-      const endLine = diagnostic.range.end.line + 1;
-      const diagnosticWithData = diagnostic as vscode.Diagnostic & { data?: unknown };
-      const message = String(diagnostic.message ?? '').trim();
-      const rawSuggestion = typeof diagnosticWithData.data === 'string' ? diagnosticWithData.data : undefined;
-      const suggestion = rawSuggestion?.trim();
-      const shouldIncludeSuggestion = Boolean(suggestion) && suggestion !== message;
-      const lineText = diagnostic.range.start.line >= 0 && diagnostic.range.start.line < document.lineCount
-        ? document.lineAt(diagnostic.range.start.line).text
-        : 'n/a';
-      return [
-        ` - line: ${startLine}${endLine !== startLine ? `-${endLine}` : ''}`,
-        ` - lineText: ${lineText}`,
-        ` - message: ${message || 'n/a'}`,
-        ...(shouldIncludeSuggestion ? [`  suggestion: ${suggestion}`] : []),
-        `\n`
-      ].join('\n');
-    }).join('\n');
-
-    return [
-      '/fix-customization-evaluation-diagnostics',
-      `Target file: ${document.uri.fsPath}`,
-      'Use ONLY the diagnostics below for this target file. Do not lint or rewrite the skill file itself.',
-      'Field meanings:',
-      '- line: 1-based line number where the diagnostic starts (or start-end for a multi-line range).',
-      '- lineText: exact text currently present at the diagnostic start line in the target file.',
-      '- message: diagnostic description explaining what is wrong and needs to be fixed.',
-      'Diagnostics:',
-      payload,
-    ].join('\n\n');
-  }
-
   private resolveSkillContext(obj: unknown): SkillContext | undefined {
     const uri = this.urlResolver.getCustomizationUri(obj) ?? vscode.window.activeTextEditor?.document.uri;
     if (!uri || uri.scheme !== 'file') {
@@ -645,33 +525,6 @@ class ExtensionRuntime {
       }
       current = parent;
     }
-  }
-
-  private waitForDocumentImprovements(uri: vscode.Uri, initialText: string, timeoutMs: number): Promise<boolean> {
-    return new Promise((resolve) => {
-      let settled = false;
-
-      const dispose = vscode.workspace.onDidChangeTextDocument((event) => {
-        if (event.document.uri.toString() !== uri.toString()) {
-          return;
-        }
-        if (event.document.getText() === initialText) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timer);
-        dispose.dispose();
-        resolve(true);
-      });
-
-      const timer = setTimeout(() => {
-        if (settled) {
-          return;
-        }
-        dispose.dispose();
-        resolve(false);
-      }, timeoutMs);
-    });
   }
 
   private async handleLLMProxyRequest(request: LLMProxyRequest): Promise<LLMProxyResponse> {
