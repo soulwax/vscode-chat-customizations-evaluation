@@ -326,6 +326,7 @@ class ExtensionRuntime {
       this.logTelemetryUsage('command/analyzePromptUsingSlashCommand/result', { outcome: 'noActiveEditor' });
       return;
     }
+    this.analysisCoordinator.queueAnalysis(uri);
     await this.openAnalyzePromptChat(uri);
     this.logTelemetryUsage('command/analyzePromptUsingSlashCommand/result', { outcome: 'openedChat' });
   }

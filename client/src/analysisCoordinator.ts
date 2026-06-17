@@ -30,6 +30,7 @@ export type AnalysisWorkflowResult =
     };
 
 export class AnalysisCoordinator {
+    private static readonly QUEUED_ANALYSIS_TIMEOUT_MS = 60000;
 
     constructor(
         private readonly getDiagnosticsForUri: (uri: vscode.Uri) => vscode.Diagnostic[],
@@ -38,7 +39,8 @@ export class AnalysisCoordinator {
     ) { }
 
     private readonly urisWithDiagnostics = new Set<string>();
-    private readonly pendingAnalysisUris = new Set<string>();
+    private readonly queuedAnalysisUris = new Set<string>();
+    private readonly queuedAnalysisTimeoutsByUri = new Map<string, ReturnType<typeof setTimeout>>();
     private readonly analysisSnapshotsByUri = new Map<string, AnalysisSnapshot>();
     private readonly previousDiagnosticMessagesByUri = new Map<string, string[]>();
 
@@ -49,6 +51,11 @@ export class AnalysisCoordinator {
     }
 
     dispose(): void {
+        for (const timeout of this.queuedAnalysisTimeoutsByUri.values()) {
+            clearTimeout(timeout);
+        }
+        this.queuedAnalysisTimeoutsByUri.clear();
+        this.queuedAnalysisUris.clear();
     }
 
     async handleAnalyzePromptCommand(options: {
@@ -66,7 +73,7 @@ export class AnalysisCoordinator {
             return;
         }
 
-        if (this.isAnalysisPending(uri)) {
+        if (this.isAnalysisRunning(uri)) {
             options.logTelemetryUsage(options.resultEventName, { outcome: 'alreadyRunning' });
             return;
         }
@@ -91,6 +98,12 @@ export class AnalysisCoordinator {
         uri: vscode.Uri;
         revealDocumentAfterSuccess: boolean;
     }): Promise<AnalysisWorkflowResult> {
+        const uriKey = options.uri.toString();
+        if (!this.queuedAnalysisUris.has(uriKey)) {
+            this.queueAnalysis(options.uri);
+        }
+        this.clearQueuedAnalysisTimeout(uriKey);
+
         const analyzeRequest = this.createAnalyzeRequest(options.uri);
         const customDiagnosticsCount = analyzeRequest.customDiagnostics?.length ?? 0;
         const currentSnapshot = await this.getCurrentAnalysisSnapshot(options.uri, analyzeRequest.customDiagnostics);
@@ -115,11 +128,21 @@ export class AnalysisCoordinator {
     }
 
     isAnalysisPending(uri: vscode.Uri): boolean {
-        return this.pendingAnalysisUris.has(uri.toString());
+        return this.queuedAnalysisUris.has(uri.toString());
     }
 
-    beginAnalysis(uri: string): void {
-        this.pendingAnalysisUris.add(uri);
+    queueAnalysis(uri: vscode.Uri): void {
+        const uriKey = uri.toString();
+        this.clearQueuedAnalysisTimeout(uriKey);
+
+        const timeout = setTimeout(() => {
+            this.queuedAnalysisUris.delete(uriKey);
+            this.queuedAnalysisTimeoutsByUri.delete(uriKey);
+            this.updateIsAnalyzingContext();
+        }, AnalysisCoordinator.QUEUED_ANALYSIS_TIMEOUT_MS);
+
+        this.queuedAnalysisUris.add(uriKey);
+        this.queuedAnalysisTimeoutsByUri.set(uriKey, timeout);
         this.updateIsAnalyzingContext();
     }
 
@@ -143,7 +166,7 @@ export class AnalysisCoordinator {
     handleDocumentClosed(uri: vscode.Uri): void {
         const uriKey = uri.toString();
         this.previousDiagnosticMessagesByUri.delete(uriKey);
-        this.pendingAnalysisUris.delete(uriKey);
+        this.clearQueuedAnalysis(uriKey);
         this.updateIsAnalyzingContext();
     }
 
@@ -196,7 +219,8 @@ export class AnalysisCoordinator {
 
     async completeAnalysis(uri: vscode.Uri, result: { duration: number; resultCount: number }): Promise<void> {
         const uriKey = uri.toString();
-        this.pendingAnalysisUris.delete(uriKey);
+        this.queuedAnalysisUris.delete(uriKey);
+        this.clearQueuedAnalysisTimeout(uriKey);
         this.updateIsAnalyzingContext();
 
         // Open Problems as soon as analysis finishes so results are visible without another click.
@@ -243,8 +267,6 @@ export class AnalysisCoordinator {
         customDiagnosticsCount: number;
         revealDocumentAfterSuccess: boolean;
     }): Promise<AnalysisWorkflowResult> {
-        this.beginAnalysis(options.uri.toString());
-
         try {
             const result = await this.sendAnalyzeRequest(options.analyzeRequest);
             this.recordAnalysisSnapshot(options.snapshot.document, options.analyzeRequest.customDiagnostics, result.resultCount);
@@ -298,7 +320,27 @@ export class AnalysisCoordinator {
     }
 
     private updateIsAnalyzingContext(): void {
-        void vscode.commands.executeCommand('setContext', 'chatCustomizationsEvaluations.isAnalyzing', this.pendingAnalysisUris.size > 0);
+        void vscode.commands.executeCommand('setContext', 'chatCustomizationsEvaluations.isAnalyzing', this.queuedAnalysisUris.size > 0);
+    }
+
+    private isAnalysisRunning(uri: vscode.Uri): boolean {
+        const uriKey = uri.toString();
+        return this.queuedAnalysisUris.has(uriKey) && !this.queuedAnalysisTimeoutsByUri.has(uriKey);
+    }
+
+    private clearQueuedAnalysis(uriKey: string): void {
+        this.queuedAnalysisUris.delete(uriKey);
+        this.clearQueuedAnalysisTimeout(uriKey);
+    }
+
+    private clearQueuedAnalysisTimeout(uriKey: string): void {
+        const timeout = this.queuedAnalysisTimeoutsByUri.get(uriKey);
+        if (!timeout) {
+            return;
+        }
+
+        clearTimeout(timeout);
+        this.queuedAnalysisTimeoutsByUri.delete(uriKey);
     }
 
     private updateHasDiagnosticsContext(): void {
