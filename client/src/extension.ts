@@ -112,7 +112,6 @@ class ExtensionRuntime {
   private createServerOptions(context: vscode.ExtensionContext): ServerOptions {
     this.outputChannel.appendLine(`[Activation] Extension path: ${context.extensionPath}`);
     const serverModule = this.resolveServerModulePath(context);
-
     const debugOptions = { execArgv: ['--nolazy', '--inspect=6009'] };
     return {
       run: { module: serverModule, transport: TransportKind.ipc },
