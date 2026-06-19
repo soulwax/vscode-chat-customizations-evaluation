@@ -7,4 +7,4 @@ export const ACTION_OPEN_WAZA_USER_GUIDE = 'Open Waza User Guide';
 export const TELEMETRY_ENDPOINT_ENV = 'CHAT_CUSTOMIZATIONS_EVALUATIONS_TELEMETRY_ENDPOINT';
 export const TELEMETRY_AUTH_TOKEN_ENV = 'CHAT_CUSTOMIZATIONS_EVALUATIONS_TELEMETRY_AUTH_TOKEN';
 
-export const NON_FIXABLE_DIAGNOSTIC_CODES = ['llm-error', 'llm-parse-error'] as const;
+export const ERROR_DIAGNOSTIC_CODES = ['llm-error', 'llm-parse-error'] as const;

@@ -62,7 +62,7 @@ export type AnalysisWorkflowResult =
   };
 
 export interface AnalysisDocumentSnapshot {
+  diagnostics: readonly vscode.Diagnostic[];
   document: vscode.TextDocument;
-  diagnostics: vscode.Diagnostic[];
   isFresh: boolean;
 };
