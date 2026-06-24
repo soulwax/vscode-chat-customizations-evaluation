@@ -1,6 +1,6 @@
 {
   "name": "vscode-chat-customizations-evaluations",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "publisher": "ms-vscode",
   "displayName": "Chat Customizations Evaluations",
   "description": "Extension for analyzing, validating, and improving AI prompts",
@@ -190,7 +190,7 @@
       ],
       "editor/content": [
         {
-          "command": "chatCustomizationsEvaluations.analyzePromptUsingSlashCommand",
+          "command": "chatCustomizationsEvaluations.analyzePrompt",
           "group": "inline",
           "when": "!chatCustomizationsEvaluations.hasDiagnostics && !chatCustomizationsEvaluations.isAnalyzing && (editorLangId == prompt || editorLangId == chatagent || editorLangId == skill || editorLangId == instructions || resourceFilename == AGENTS.md)"
         },
@@ -251,6 +251,6 @@
     "eslint": "^9.39.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.55.0",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.9"
   }
 }

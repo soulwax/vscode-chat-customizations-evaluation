@@ -13,45 +13,39 @@ import {
   registerWazaCommands,
 } from './waza/waza';
 import {
-  ACTION_FIX_DIAGNOSTICS, NON_FIXABLE_DIAGNOSTIC_CODES,
-  TELEMETRY_AUTH_TOKEN_ENV,
-  TELEMETRY_ENDPOINT_ENV
-} from './strings';
+  ACTION_FIX_DIAGNOSTICS
+} from './analysis/strings';
 import type {
   LLMProxyRequest,
-  LLMProxyResponse,
-  SkillContext,
-  TelemetryData
-} from './types';
-import { findSkillFilePath, inferSkillProjectRoot } from './waza/wazaUtils';
-import { AnalysisCoordinator } from './analysisCoordinator';
-import { FixDiagnosticsCoordinator } from './fixDiagnosticsCoordinator';
-import { ExtensionTelemetrySender } from './telemetry';
-import { UrlResolver } from './urlResolver';
-import { ModelPicker } from './modelPicker';
+  LLMProxyResponse
+} from './analysis/types';
+import { AnalysisCoordinator } from './analysis/analysisCoordinator';
+import { FixDiagnosticsCoordinator } from './analysis/fixDiagnosticsCoordinator';
+import { DiagnosticsManager } from './analysis/diagnosticsManager';
+import { UrlResolver } from './analysis/urlResolver';
+import { ModelPicker } from './analysis/modelPicker';
+import { SkillContextResolver } from './analysis/skillContextResolver';
 
 const LLMRequestType = new RequestType<LLMProxyRequest, LLMProxyResponse, void>('chatCustomizationsEvaluations/llmRequest');
-const NON_FIXABLE_DIAGNOSTIC_CODE_SET = new Set<string>(NON_FIXABLE_DIAGNOSTIC_CODES);
 
 class ExtensionRuntime {
 
   private static readonly LLM_REQUEST_TIMEOUT_MS = 30_000;
 
-  private client: LanguageClient | undefined;
+  private client!: LanguageClient;
   private outputChannel!: vscode.OutputChannel;
   private modelPicker!: ModelPicker;
   private extensionContext!: vscode.ExtensionContext;
-  private telemetryLogger: vscode.TelemetryLogger | undefined;
   private analysisCoordinator!: AnalysisCoordinator;
   private fixDiagnosticsCoordinator!: FixDiagnosticsCoordinator;
-  private extensionDiagnosticCollection!: vscode.DiagnosticCollection;
+  private diagnosticsManager!: DiagnosticsManager;
+
   private readonly urlResolver = new UrlResolver();
-  private readonly pendingDiagnosticEditsByUri = new Map<string, { fullDocument: boolean; ranges: vscode.Range[] }>();
+  private readonly skillContextResolver = new SkillContextResolver(this.urlResolver);
 
   activate(context: vscode.ExtensionContext): void {
-    this.initializeCoreServices(context);
-    this.initializeWazaRuntime();
 
+    this.outputChannel = vscode.window.createOutputChannel('Chat Customizations Evaluations');
     const serverOptions = this.createServerOptions(context);
     const clientOptions = this.createClientOptions();
     this.client = new LanguageClient(
@@ -61,21 +55,21 @@ class ExtensionRuntime {
       clientOptions
     );
 
+    this.initializeCoreServices(context);
+    this.initializeWazaRuntime();
     this.registerLanguageClientHandlers();
     this.registerCommands(context);
-    context.subscriptions.push(...registerWazaCommands(context));
     this.registerCodeActionProvider(context);
     this.registerWorkspaceHandlers(context);
     this.registerModelHandlers(context);
     this.startLanguageClient();
+    context.subscriptions.push(...registerWazaCommands(context));
 
     console.log('Chat Customizations Evaluations extension activated');
   }
 
   deactivate(): Thenable<void> | undefined {
-    this.analysisCoordinator?.dispose();
-    this.logTelemetryUsage('extension/deactivate');
-    this.telemetryLogger?.dispose();
+    this.analysisCoordinator.dispose();
     if (!this.client) {
       return undefined;
     }
@@ -84,28 +78,10 @@ class ExtensionRuntime {
 
   private initializeCoreServices(context: vscode.ExtensionContext): void {
     this.extensionContext = context;
-    this.outputChannel = vscode.window.createOutputChannel('Chat Customizations Evaluations');
-    this.extensionDiagnosticCollection = vscode.languages.createDiagnosticCollection('chat-customizations-evaluations-client');
-    context.subscriptions.push(this.extensionDiagnosticCollection);
-
-    this.analysisCoordinator = new AnalysisCoordinator(
-      (uri) => this.getExtensionDiagnostics(uri),
-      (diagnostic) => this.isNonFixableDiagnostic(diagnostic),
-      (request) => this.client!.sendRequest<{ duration: number; resultCount: number }>('chatCustomizationsEvaluations/analyze', request),
-    );
-    this.analysisCoordinator.initialize(context);
-    this.fixDiagnosticsCoordinator = new FixDiagnosticsCoordinator({
-      getDiagnosticsForUri: (uri) => this.getExtensionDiagnostics(uri),
-      isNonFixableDiagnostic: (diagnostic) => this.isNonFixableDiagnostic(diagnostic),
-      clearDiagnosticsForUri: (uri) => this.extensionDiagnosticCollection.set(uri, []),
-      resolveSkillContextForUri: (uri) => this.resolveSkillContext({ uri }),
-      logTelemetryUsage: (eventName, data) => this.logTelemetryUsage(eventName, data),
-    });
+    this.diagnosticsManager = new DiagnosticsManager(context);
+    this.analysisCoordinator = new AnalysisCoordinator(context, this.diagnosticsManager, this.client, this.outputChannel);
+    this.fixDiagnosticsCoordinator = new FixDiagnosticsCoordinator(this.diagnosticsManager, this.skillContextResolver)
     this.modelPicker = new ModelPicker(this.outputChannel);
-
-    this.telemetryLogger = this.createExtensionTelemetryLogger(context);
-    context.subscriptions.push(this.telemetryLogger);
-    this.logTelemetryUsage('extension/activate', { workspaceFolderCount: vscode.workspace.workspaceFolders?.length ?? 0 });
   }
 
   private initializeWazaRuntime(): void {
@@ -113,24 +89,17 @@ class ExtensionRuntime {
       extensionContext: this.extensionContext,
       outputChannel: this.outputChannel,
       getCustomizationUri: (obj) => this.urlResolver.getCustomizationUri(obj),
-      requestLLM: async (request) => this.handleLLMProxyRequest(request),
-      logTelemetryUsage: (eventName, data) => this.logTelemetryUsage(eventName, data),
-      logTelemetryError: (eventName, error, data) => this.logTelemetryError(eventName, error, data),
+      requestLLM: async (request) => this.handleLLMProxyRequest(request)
     });
   }
 
   private createServerOptions(context: vscode.ExtensionContext): ServerOptions {
     this.outputChannel.appendLine(`[Activation] Extension path: ${context.extensionPath}`);
     const serverModule = this.resolveServerModulePath(context);
-
     const debugOptions = { execArgv: ['--nolazy', '--inspect=6009'] };
     return {
       run: { module: serverModule, transport: TransportKind.ipc },
-      debug: {
-        module: serverModule,
-        transport: TransportKind.ipc,
-        options: debugOptions,
-      },
+      debug: { module: serverModule, transport: TransportKind.ipc, options: debugOptions },
     };
   }
 
@@ -162,8 +131,7 @@ class ExtensionRuntime {
       },
       middleware: {
         handleDiagnostics: (uri, diagnostics, next) => {
-          this.handleLanguageClientDiagnostics(uri, diagnostics);
-
+          this.diagnosticsManager.handleLanguageClientDiagnostics(uri, diagnostics);
           // Prevent duplicate display by routing diagnostics through the client-owned collection.
           next(uri, []);
         },
@@ -172,21 +140,7 @@ class ExtensionRuntime {
     };
   }
 
-  private handleLanguageClientDiagnostics(uri: vscode.Uri, diagnostics: readonly vscode.Diagnostic[]): void {
-    const uriKey = uri.toString();
-    const pendingEdit = this.pendingDiagnosticEditsByUri.get(uriKey);
-    const filteredDiagnostics = pendingEdit
-      ? this.filterDiagnosticsForEdit(diagnostics, pendingEdit)
-      : diagnostics;
-
-    this.pendingDiagnosticEditsByUri.delete(uriKey);
-    this.extensionDiagnosticCollection.set(uri, filteredDiagnostics);
-  }
-
   private registerLanguageClientHandlers(): void {
-    if (!this.client) {
-      return;
-    }
     this.client.onRequest(LLMRequestType, async (request: LLMProxyRequest): Promise<LLMProxyResponse> => {
       this.outputChannel.appendLine('[LLM Proxy] Received request from server');
       try {
@@ -228,9 +182,9 @@ class ExtensionRuntime {
   }
 
   private provideCodeActions(document: vscode.TextDocument, range: vscode.Range | vscode.Selection): vscode.CodeAction[] {
-    const allDiagnostics = this.getExtensionDiagnostics(document.uri);
+    const allDiagnostics = this.diagnosticsManager.getDiagnosticsForUri(document.uri);
     const fixableDiagnostics = allDiagnostics.filter(
-      d => !this.isNonFixableDiagnostic(d) && this.rangesOverlap(d.range, range),
+      d => !this.diagnosticsManager.hasErrorDiagnostics(d) && this.diagnosticsManager.rangesOverlap(d.range, range),
     );
     if (fixableDiagnostics.length === 0) {
       return [];
@@ -250,19 +204,23 @@ class ExtensionRuntime {
 
   private registerWorkspaceHandlers(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
-      vscode.languages.onDidChangeDiagnostics((e) => {
-        this.analysisCoordinator?.handleDiagnosticsChanged(e.uris);
-      }),
-      vscode.workspace.onDidChangeTextDocument((event) => {
-        this.handleDocumentChangeForDiagnostics(event);
-      }),
-      vscode.workspace.onDidCloseTextDocument((document) => {
-        const uriKey = document.uri.toString();
-        this.pendingDiagnosticEditsByUri.delete(uriKey);
-        this.extensionDiagnosticCollection.delete(document.uri);
-        this.analysisCoordinator?.handleDocumentClosed(document.uri);
-      }),
+      vscode.languages.onDidChangeDiagnostics((e) => this.onDidChangeDiagnostics(e)),
+      vscode.workspace.onDidChangeTextDocument((event) => this.onDidChangeTextDocument(event)),
+      vscode.workspace.onDidCloseTextDocument((document) => this.onDidCloseTextDocument(document)),
     );
+  }
+
+  private onDidChangeDiagnostics(e: vscode.DiagnosticChangeEvent): void {
+    this.analysisCoordinator.handleDiagnosticsChanged(e.uris);
+  }
+
+  private onDidChangeTextDocument(event: vscode.TextDocumentChangeEvent): void {
+    this.diagnosticsManager.handleDocumentChange(event);
+  }
+
+  private onDidCloseTextDocument(document: vscode.TextDocument): void {
+    this.diagnosticsManager.handleDocumentClosed(document.uri);
+    this.analysisCoordinator?.handleDocumentClosed(document.uri);
   }
 
   private registerModelHandlers(context: vscode.ExtensionContext): void {
@@ -276,79 +234,41 @@ class ExtensionRuntime {
   private startLanguageClient(): void {
     this.client?.start().then(() => {
       this.outputChannel.appendLine('[Activation] Language server started successfully');
-      this.logTelemetryUsage('extension/languageServerStart', { outcome: 'success' });
     }).catch((err: Error) => {
       this.outputChannel.appendLine(`[Activation] Language server failed to start: ${err.message}`);
-      this.logTelemetryError('extension/languageServerStart', err, { outcome: 'failed' });
       this.outputChannel.show(true);
-    });
-  }
-
-  private createExtensionTelemetryLogger(context: vscode.ExtensionContext): vscode.TelemetryLogger {
-    const endpoint = process.env[TELEMETRY_ENDPOINT_ENV];
-    const authToken = process.env[TELEMETRY_AUTH_TOKEN_ENV];
-    if (!endpoint) {
-      this.outputChannel.appendLine(
-        `[Telemetry] ${TELEMETRY_ENDPOINT_ENV} is not set; telemetry events will be collected by VS Code but not exported by this extension sender.`
-      );
-    }
-    const extensionVersion = String(context.extension.packageJSON.version ?? 'unknown');
-    const sender = new ExtensionTelemetrySender(endpoint, authToken, extensionVersion, this.outputChannel);
-    return vscode.env.createTelemetryLogger(sender, {
-      additionalCommonProperties: {
-        extensionVersion,
-      },
-    });
-  }
-
-  private logTelemetryUsage(eventName: string, data?: TelemetryData): void {
-    this.telemetryLogger?.logUsage(eventName, data);
-  }
-
-  private logTelemetryError(eventName: string, error: unknown, data?: TelemetryData): void {
-    this.telemetryLogger?.logError(eventName, {
-      ...data,
-      errorMessage: error instanceof Error ? error.message : String(error),
     });
   }
 
   private registerCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
+      // The next line is kept for future use
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptUsingSlashCommand', async (obj) => this.handleAnalyzePromptUsingSlashCommand(obj)),
-      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async (obj) => this.analysisCoordinator.handleAnalyzePromptCommand({
-        candidateUri: this.urlResolver.getCustomizationUri(obj),
-        logTelemetryUsage: (eventName, data) => this.logTelemetryUsage(eventName, data),
-        logTelemetryError: (eventName, error, data) => this.logTelemetryError(eventName, error, data)
-      })),
+      // 
+      vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePrompt', async (obj) => this.analysisCoordinator.handleAnalyzePromptCommand(this.urlResolver.getCustomizationUri(obj))),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.fixDiagnostics', async (diagnostics?: vscode.Diagnostic[]) => this.fixDiagnosticsCoordinator.handleFixDiagnosticsCommand(diagnostics)),
       vscode.commands.registerCommand('chatCustomizationsEvaluations.analyzePromptFromCustomization', async (obj) => this.handleAnalyzePromptFromCustomizationCommand(obj)),
     );
   }
 
   private async handleAnalyzePromptUsingSlashCommand(obj?: unknown): Promise<void> {
-    this.logTelemetryUsage('command/analyzePromptUsingSlashCommand');
     const uri = this.urlResolver.getCustomizationUri(obj) ?? vscode.window.activeTextEditor?.document.uri;
     if (!uri) {
-      this.logTelemetryUsage('command/analyzePromptUsingSlashCommand/result', { outcome: 'noActiveEditor' });
       return;
     }
+    this.analysisCoordinator.queueAnalysis(uri);
     await this.openAnalyzePromptChat(uri);
-    this.logTelemetryUsage('command/analyzePromptUsingSlashCommand/result', { outcome: 'openedChat' });
   }
 
   private async handleAnalyzePromptFromCustomizationCommand(obj: unknown): Promise<void> {
-    this.logTelemetryUsage('command/analyzePromptFromCustomization');
     this.outputChannel.appendLine(`customization obj : ${JSON.stringify(obj)}`);
     const uri = this.urlResolver.getCustomizationUri(obj);
     if (!uri) {
       this.outputChannel.appendLine('[Analyze Prompt From Customization] Missing URI in command arguments');
-      this.logTelemetryUsage('command/analyzePromptFromCustomization/result', { outcome: 'missingUri' });
-      void vscode.window.showWarningMessage('Unable to analyze prompt: no URI was provided by the customization item.');
+      vscode.window.showWarningMessage('Unable to analyze prompt: no URI was provided by the customization item.');
       return;
     }
-
     await this.openAnalyzePromptChat(uri);
-    this.logTelemetryUsage('command/analyzePromptFromCustomization/result', { outcome: 'openedChat' });
   }
 
   private async openAnalyzePromptChat(targetUri?: vscode.Uri): Promise<void> {
@@ -361,137 +281,6 @@ class ExtensionRuntime {
       query: `/analyze-prompt ${targetUri?.toString() ?? ''}`,
       isPartialQuery: false,
     });
-  }
-
-  private getExtensionDiagnostics(uri: vscode.Uri): vscode.Diagnostic[] {
-    const fromCollection = this.extensionDiagnosticCollection.get(uri) ?? [];
-    if (fromCollection.length > 0) {
-      return fromCollection.filter(
-        d => d.source?.startsWith('chat-customizations-evaluations')
-      );
-    }
-
-    return vscode.languages.getDiagnostics(uri).filter(
-      d => d.source?.startsWith('chat-customizations-evaluations')
-    );
-  }
-
-  private handleDocumentChangeForDiagnostics(event: vscode.TextDocumentChangeEvent): void {
-    if (event.contentChanges.length === 0) {
-      return;
-    }
-
-    const uri = event.document.uri;
-    this.analysisCoordinator?.handleDocumentContentChanged(uri);
-    const uriKey = uri.toString();
-    const currentEdit = this.pendingDiagnosticEditsByUri.get(uriKey) ?? { fullDocument: false, ranges: [] };
-    const nextEdit = this.mergeDiagnosticEdit(currentEdit, event.contentChanges);
-    this.pendingDiagnosticEditsByUri.set(uriKey, nextEdit);
-
-    const existingDiagnostics = this.extensionDiagnosticCollection.get(uri) ?? [];
-    if (existingDiagnostics.length === 0) {
-      return;
-    }
-
-    const filteredDiagnostics = this.filterDiagnosticsForEdit(existingDiagnostics, nextEdit);
-    if (filteredDiagnostics.length === existingDiagnostics.length) {
-      return;
-    }
-
-    this.extensionDiagnosticCollection.set(uri, filteredDiagnostics);
-    this.outputChannel.appendLine(`[Diagnostics] Removed ${existingDiagnostics.length - filteredDiagnostics.length} touched diagnostics for ${uri.fsPath}`);
-  }
-
-  private mergeDiagnosticEdit(
-    existing: { fullDocument: boolean; ranges: vscode.Range[] },
-    contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
-  ): { fullDocument: boolean; ranges: vscode.Range[] } {
-    const hasFullDocumentEdit = existing.fullDocument || contentChanges.some(change => !change.range);
-    if (hasFullDocumentEdit) {
-      return { fullDocument: true, ranges: [] };
-    }
-
-    const nextRanges = existing.ranges.slice();
-    for (const change of contentChanges) {
-      if (change.range) {
-        nextRanges.push(change.range);
-      }
-    }
-
-    return {
-      fullDocument: false,
-      ranges: nextRanges,
-    };
-  }
-
-  private filterDiagnosticsForEdit(
-    diagnostics: readonly vscode.Diagnostic[],
-    edit: { fullDocument: boolean; ranges: vscode.Range[] },
-  ): vscode.Diagnostic[] {
-    if (edit.fullDocument) {
-      return [];
-    }
-
-    if (edit.ranges.length === 0) {
-      return diagnostics.slice();
-    }
-
-    return diagnostics.filter((diagnostic) => {
-      return !edit.ranges.some((range) => this.rangesOverlap(diagnostic.range, range));
-    });
-  }
-
-  private comparePosition(left: vscode.Position, right: vscode.Position): number {
-    if (left.line !== right.line) {
-      return left.line - right.line;
-    }
-
-    return left.character - right.character;
-  }
-
-  private rangesOverlap(left: vscode.Range, right: vscode.Range): boolean {
-    return this.comparePosition(left.start, right.end) <= 0
-      && this.comparePosition(right.start, left.end) <= 0;
-  }
-
-  private diagnosticCodeToString(code: vscode.Diagnostic['code']): string {
-    if (code === undefined) {
-      return 'n/a';
-    }
-
-    if (typeof code === 'string' || typeof code === 'number') {
-      return String(code);
-    }
-
-    return String(code.value);
-  }
-
-  private isNonFixableDiagnostic(diagnostic: vscode.Diagnostic): boolean {
-    return NON_FIXABLE_DIAGNOSTIC_CODE_SET.has(this.diagnosticCodeToString(diagnostic.code));
-  }
-
-  private resolveSkillContext(obj: unknown): SkillContext | undefined {
-    const uri = this.urlResolver.getCustomizationUri(obj) ?? vscode.window.activeTextEditor?.document.uri;
-    if (!uri || uri.scheme !== 'file') {
-      return undefined;
-    }
-
-    const skillFilePath = findSkillFilePath(uri.fsPath);
-    if (!skillFilePath) {
-      return undefined;
-    }
-
-    const skillDirPath = path.dirname(skillFilePath);
-    const skillName = path.basename(skillDirPath);
-    const workspaceRoot = inferSkillProjectRoot(uri, skillDirPath);
-
-    return {
-      uri,
-      skillFilePath,
-      skillDirPath,
-      skillName,
-      workspaceRoot,
-    };
   }
 
   private async handleLLMProxyRequest(request: LLMProxyRequest): Promise<LLMProxyResponse> {
@@ -507,9 +296,7 @@ class ExtensionRuntime {
       }
 
       const messages = this.buildLLMProxyMessages(request);
-
       const response = await model.sendRequest(messages, {}, cts.token);
-
       const text = await this.collectStreamedResponseText(response);
 
       if (!text.trim()) {
@@ -537,7 +324,6 @@ class ExtensionRuntime {
   private async collectStreamedResponseText(
     response: vscode.LanguageModelChatResponse,
   ): Promise<string> {
-
     let text = '';
     for await (const part of response.text) {
       text += part;

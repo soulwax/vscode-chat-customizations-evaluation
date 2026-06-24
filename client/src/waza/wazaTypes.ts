@@ -1,5 +1,5 @@
 import type * as vscode from 'vscode';
-import type { LLMProxyRequest, LLMProxyResponse } from '../types';
+import type { LLMProxyRequest, LLMProxyResponse } from '../analysis/types';
 
 export type TelemetryData = Record<string, string | number | boolean | undefined>;
 
@@ -37,6 +37,4 @@ export interface WazaDependencies {
     outputChannel: vscode.OutputChannel;
     getCustomizationUri: (obj: unknown) => vscode.Uri | undefined;
     requestLLM: (request: LLMProxyRequest) => Promise<LLMProxyResponse>;
-    logTelemetryUsage: (eventName: string, data?: TelemetryData) => void;
-    logTelemetryError: (eventName: string, error: unknown, data?: TelemetryData) => void;
 }
